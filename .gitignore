@@ -1,0 +1,22 @@
+# macOS metadata
+.DS_Store
+._*
+
+# Reproducible build output
+build/
+.build/
+DerivedData/
+
+# Swift Package Manager local state
+.swiftpm/
+
+# Editor and user-local state
+*.xcuserstate
+xcuserdata/
+*.swp
+*~
+
+# Runtime logs and temporary files
+*.log
+*.tmp
+*.temp
