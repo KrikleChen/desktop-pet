@@ -330,8 +330,7 @@ private final class DialoguePresentationView: NSView {
 
         case .dragProtest:
             addEntrance(opacity: [0, 1], x: [-5, 4, 0], y: [5, -2, 0], scale: [0.88, 1.05, 1], duration: 0.28)
-            addStay(keyPath: "transform.rotation.z", values: [-0.035, 0.03, -0.02, 0.025], duration: 0.24, repeatCount: .infinity, autoreverses: true)
-            addStay(keyPath: "transform.translation.x", values: [-2.4, 2.4, -1.2, 1.2], duration: 0.22, repeatCount: .infinity, autoreverses: true)
+            // 人物继续挣扎，但文字停稳，避免跟随角色抖动而难以阅读。
 
         case .resigned:
             addEntrance(opacity: [0, 0.78, 1], x: [0, 0], y: [13, -2, 0], scale: [0.98, 1], duration: 0.52)
