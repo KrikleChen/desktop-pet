@@ -469,7 +469,13 @@ private final class DialoguePresentationView: NSView {
     }
 
     private func drawCourtroom() {
-        let rect = NSRect(x: 5, y: 10, width: max(1, bounds.width - 10), height: min(63, max(54, bounds.height * 0.24)))
+        let height = min(57, max(50, bounds.height * 0.22))
+        let rect = NSRect(
+            x: 5,
+            y: bounds.maxY - 7 - height,
+            width: max(1, bounds.width - 10),
+            height: height
+        )
         let shadow = rect.offsetBy(dx: 3, dy: -3)
         NSColor(calibratedWhite: 0, alpha: 0.58).setFill()
         NSBezierPath(rect: shadow).fill()
@@ -699,7 +705,7 @@ private final class DialoguePresentationView: NSView {
             )
             let size = question.size()
             let x = min(bounds.width - size.width - 8, max(8, anchor.x - size.width * 0.5))
-            let y = min(bounds.height - size.height - 7, max(8, anchor.y - size.height * 0.5))
+            let y = bounds.height - size.height - 7
             question.draw(at: NSPoint(x: x, y: y))
             return
         }
@@ -800,8 +806,11 @@ private final class DialoguePresentationView: NSView {
 
     private func positionedRect(size requestedSize: NSSize, around point: NSPoint, preference: PlacementPreference) -> NSRect {
         let margin: CGFloat = 7
+        // PetView 的人物最高到 y=180。普通台词统一待在顶部字幕带；
+        // 云朵尾巴等装饰最多向下延伸约 15pt，因此正文从 y=196 开始。
+        let dialogueFloor = min(bounds.maxY - margin - 1, max(bounds.minY + margin, 196))
         let safeWidth = max(1, bounds.width - margin * 2)
-        let safeHeight = max(1, bounds.height - margin * 2)
+        let safeHeight = max(1, bounds.maxY - margin - dialogueFloor)
         let size = NSSize(
             width: min(requestedSize.width, safeWidth),
             height: min(requestedSize.height, safeHeight)
@@ -816,7 +825,7 @@ private final class DialoguePresentationView: NSView {
             originY = point.y - size.height * 0.5
         }
         originX = min(bounds.maxX - margin - size.width, max(bounds.minX + margin, originX))
-        originY = min(bounds.maxY - margin - size.height, max(bounds.minY + margin, originY))
+        originY = min(bounds.maxY - margin - size.height, max(dialogueFloor, originY))
         return NSRect(origin: NSPoint(x: originX, y: originY), size: size)
     }
 

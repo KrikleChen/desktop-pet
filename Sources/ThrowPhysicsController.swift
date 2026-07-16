@@ -169,6 +169,7 @@ final class ThrowPhysicsController {
     }
 
     var onStarted: ((MotionState) -> Void)?
+    var onUpdated: ((MotionState) -> Void)?
     var onBounce: ((MotionState, ThrowCollisionEdges) -> Void)?
     var onSettled: ((MotionState) -> Void)?
 
@@ -296,9 +297,11 @@ final class ThrowPhysicsController {
 
         window.setFrameOrigin(frame.origin)
         updateNormalizedValues()
+        let updatedState = motionState(for: window)
+        onUpdated?(updatedState)
 
         if !collidedEdges.isEmpty {
-            let state = motionState(for: window)
+            let state = updatedState
             onBounce?(state, collidedEdges)
             guard isRunning else { return }
 
