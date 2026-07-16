@@ -23,7 +23,7 @@
 ./build.sh
 ```
 
-当前结论：失败，不允许进入 `main`。2026-07-16 首次检查发现 `Sources/DailyCase.swift` 的条件编译自检含顶层表达式，Swift 编译器报 `expressions are not allowed at the top level`；同一次构建还检测到该文件被并发 worker 修改。此检查点只作为 WIP 集成基线。
+当前结论：失败，不允许进入 `main`。2026-07-16 首次检查发现 `Sources/DailyCase.swift` 的条件编译自检含顶层表达式，且同一次构建检测到该文件被并发 worker 修改。提交基线后在干净工作区复跑，稳定失败点为 `Sources/PetView.swift:699` 的动作 `switch` 不完整，缺少 `.thrown`、`.spinning`、`.impact`、`.dizzy`、`.dusting`、`.irritated` 等分支。此检查点只作为 WIP 集成基线。
 
 ## 待验收项
 
