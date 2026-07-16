@@ -30,6 +30,7 @@
 - `./build.sh` 成功，`codesign --verify --deep --strict` 成功，应用启动后未出现即时崩溃。
 - x86_64 与 arm64、macOS 12 target 的全工程 `-warnings-as-errors` 类型检查均成功。
 - 抓取区域测试和交互手势测试成功；甩飞阈值为 720 points/s，使用最后 0.16 秒轨迹，角色仅做方向性轻微后仰，没有连续 360 度旋转。
+- 台词遮挡门禁通过：除 `ObjectionBurstView` 的“異議あり！”演出外，人物区域固定为 `y=0...180`，普通台词正文限制在 `y>=196` 的顶部字幕带，courtroom 与 heard-name 问号也固定在顶部；主 agent 的 badge、courtroom、impact 截窗自测均显示台词与人物完全分离。
 - 6 个 `scatter-*-cg.png` 均带 alpha 且已进入 app bundle；新增资源总计约 2.9 MB，未发现异常大文件。
 - 敏感信息、本机绝对路径、临时产物和 diff 空白检查均通过。
 - 静态复审未发现甩飞途中重新抓取、落地恢复、倒吊散落清理、异步背景结果防陈旧、监听状态接线或图鉴次数累计中的明显阻塞性回归。
