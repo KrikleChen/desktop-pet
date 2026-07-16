@@ -291,12 +291,6 @@ private final class DialoguePresentationView: NSView {
 
         case .nervous:
             addEntrance(opacity: [0, 1], x: [-7, 6, -5, 4, 0], y: [1, -1, 0], scale: [0.86, 1.04, 1], duration: 0.42)
-            addStay(
-                keyPath: "transform.translation.x",
-                values: [-1.2, 1.2, -0.8, 0.8, 0],
-                duration: 0.25,
-                repeatCount: 5
-            )
 
         case .courtroom:
             addEntrance(
@@ -319,7 +313,6 @@ private final class DialoguePresentationView: NSView {
 
         case .spiritual:
             addEntrance(opacity: [0, 0.9, 1], x: [0, 0], y: [-4, 3, 0], scale: [0.82, 1.03, 1], duration: 0.55)
-            addStay(keyPath: "opacity", values: [0.78, 1, 0.84], duration: 1.4, repeatCount: 2, autoreverses: true)
 
         case .darkWhisper:
             addEntrance(opacity: [0, 0.58, 1], x: [-3, 0], y: [-2, 0], scale: [1, 1], duration: 0.72)
@@ -339,13 +332,14 @@ private final class DialoguePresentationView: NSView {
             addEntrance(opacity: [0, 1], x: [5, -2, 0], y: [-4, 1, 0], scale: [0.55, 1.12, 1], duration: 0.32)
 
         case .impact:
+            // 碰撞的冲击感交给人物与特效；字幕层只快速淡入并保持稳定，
+            // 避免缩放、旋转和位移导致短句也无法读清。
             addEntrance(
-                opacity: [0, 1, 1],
-                x: [-7, 4, -2, 0],
-                y: [9, -3, 0],
-                scale: [1.85, 0.82, 1.08, 1],
-                rotation: [-0.10, 0.035, 0],
-                duration: 0.27
+                opacity: [0, 1],
+                x: [0, 0],
+                y: [0, 0],
+                scale: [1, 1],
+                duration: 0.08
             )
 
         case .friendly:
@@ -392,8 +386,8 @@ private final class DialoguePresentationView: NSView {
             duration = 0.28
             addExit(opacity: [1, 0], x: [0, 4], y: [0, 5], scale: [1, 0.72], duration: duration)
         case .impact:
-            duration = 0.18
-            addExit(opacity: [1, 0], x: [0, 0], y: [0, 6], scale: [1, 1.22], rotation: [0, 0.07], duration: duration)
+            duration = 0.14
+            addExit(opacity: [1, 0], x: [0, 0], y: [0, 0], scale: [1, 1], duration: duration)
         case .friendly:
             duration = 0.24
             addExit(opacity: [1, 0], x: [0, 0], y: [0, 8], scale: [1, 0.97], duration: duration)
@@ -404,20 +398,133 @@ private final class DialoguePresentationView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard bounds.width > 2, bounds.height > 2 else { return }
+        drawUnifiedCaption()
+    }
 
+    private func drawUnifiedCaption() {
+        let displayedText = style == .heardName && phase == .cue ? "？" : visibleText
+        let layout = makeTextLayout(
+            text: displayedText,
+            baseFont: .systemFont(ofSize: 13, weight: .semibold),
+            color: NSColor(calibratedRed: 0.07, green: 0.14, blue: 0.25, alpha: 0.98),
+            alignment: .center,
+            maximum: NSSize(width: 164, height: 38)
+        )
+        let rect = positionedRect(
+            size: NSSize(
+                width: min(226, max(176, layout.size.width + 62)),
+                height: min(57, max(45, layout.size.height + 18))
+            ),
+            around: anchor,
+            preference: .above
+        )
+
+        let shadow = NSBezierPath(
+            roundedRect: rect.offsetBy(dx: 2, dy: -2),
+            xRadius: 11,
+            yRadius: 11
+        )
+        NSColor(calibratedWhite: 0, alpha: 0.24).setFill()
+        shadow.fill()
+
+        let panel = NSBezierPath(roundedRect: rect, xRadius: 11, yRadius: 11)
+        NSColor(calibratedRed: 0.98, green: 0.96, blue: 0.86, alpha: 0.97).setFill()
+        panel.fill()
+        NSColor(calibratedRed: 0.08, green: 0.16, blue: 0.30, alpha: 0.92).setStroke()
+        panel.lineWidth = 1.7
+        panel.stroke()
+
+        let accent = accentColor(for: style)
+        accent.setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 4, y: rect.minY + 6, width: 5, height: rect.height - 12),
+            xRadius: 2.5,
+            yRadius: 2.5
+        ).fill()
+
+        let markerRect = NSRect(x: rect.minX + 14, y: rect.midY - 14, width: 28, height: 28)
+        accent.setFill()
+        NSBezierPath(ovalIn: markerRect).fill()
+        let marker = NSAttributedString(
+            string: markerText(for: style),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 14, weight: .heavy),
+                .foregroundColor: markerForegroundColor(for: style),
+            ]
+        )
+        marker.draw(
+            at: NSPoint(
+                x: markerRect.midX - marker.size().width / 2,
+                y: markerRect.midY - marker.size().height / 2
+            )
+        )
+
+        let textRect = NSRect(
+            x: markerRect.maxX + 5,
+            y: rect.minY + 7,
+            width: rect.maxX - markerRect.maxX - 12,
+            height: rect.height - 14
+        )
+        layout.drawCentered(in: textRect)
+
+        let tail = NSBezierPath()
+        let tailX = min(rect.maxX - 18, max(rect.minX + 18, anchor.x))
+        tail.move(to: NSPoint(x: tailX - 5, y: rect.minY + 1))
+        tail.line(to: NSPoint(x: tailX, y: rect.minY - 6))
+        tail.line(to: NSPoint(x: tailX + 5, y: rect.minY + 1))
+        tail.close()
+        NSColor(calibratedRed: 0.98, green: 0.96, blue: 0.86, alpha: 0.97).setFill()
+        tail.fill()
+    }
+
+    private func accentColor(for style: DialogueStyle) -> NSColor {
         switch style {
-        case .thought: drawThought()
-        case .nervous: drawNervous()
-        case .courtroom: drawCourtroom()
-        case .badge: drawBadge()
-        case .spiritual: drawSpiritual()
-        case .darkWhisper: drawDarkWhisper()
-        case .flashlight: drawFlashlight()
-        case .dragProtest: drawDragProtest()
-        case .resigned: drawResigned()
-        case .heardName: drawHeardName()
-        case .impact: drawImpact()
-        case .friendly: drawFriendly()
+        case .thought, .friendly:
+            return NSColor(calibratedRed: 0.17, green: 0.34, blue: 0.58, alpha: 1)
+        case .nervous:
+            return NSColor(calibratedRed: 0.12, green: 0.57, blue: 0.72, alpha: 1)
+        case .courtroom, .impact:
+            return NSColor(calibratedRed: 0.72, green: 0.10, blue: 0.05, alpha: 1)
+        case .badge:
+            return NSColor(calibratedRed: 0.91, green: 0.61, blue: 0.10, alpha: 1)
+        case .spiritual:
+            return NSColor(calibratedRed: 0.10, green: 0.58, blue: 0.27, alpha: 1)
+        case .darkWhisper, .resigned:
+            return NSColor(calibratedWhite: 0.33, alpha: 1)
+        case .flashlight:
+            return NSColor(calibratedRed: 0.94, green: 0.72, blue: 0.12, alpha: 1)
+        case .dragProtest:
+            return NSColor(calibratedRed: 0.90, green: 0.34, blue: 0.06, alpha: 1)
+        case .heardName:
+            return NSColor(calibratedRed: 0.22, green: 0.48, blue: 0.79, alpha: 1)
+        }
+    }
+
+    private func markerText(for style: DialogueStyle) -> String {
+        switch style {
+        case .thought, .darkWhisper, .resigned:
+            return "…"
+        case .nervous, .courtroom, .dragProtest, .impact:
+            return "!"
+        case .badge:
+            return "律"
+        case .spiritual:
+            return "勾"
+        case .flashlight:
+            return "✦"
+        case .heardName:
+            return "?"
+        case .friendly:
+            return "●"
+        }
+    }
+
+    private func markerForegroundColor(for style: DialogueStyle) -> NSColor {
+        switch style {
+        case .badge, .flashlight:
+            return NSColor(calibratedRed: 0.19, green: 0.13, blue: 0.03, alpha: 1)
+        default:
+            return .white
         }
     }
 

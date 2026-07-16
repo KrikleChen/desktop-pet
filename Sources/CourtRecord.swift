@@ -61,7 +61,6 @@ enum CourtRecordCategory: String {
     case environment = "环境反应"
     case nameResponse = "名字回应"
     case physics = "桌面互动"
-    case caseCompletion = "今日一案"
 
     var icon: String {
         switch self {
@@ -71,7 +70,6 @@ enum CourtRecordCategory: String {
         case .environment: return "☾"
         case .nameResponse: return "♪"
         case .physics: return "↗"
-        case .caseCompletion: return "§"
         }
     }
 }
@@ -89,7 +87,6 @@ enum CourtRecordID {
     static let nameResponse = "response.heard-name"
     static let thrown = "physics.thrown"
     static let upsideDownScatter = "physics.upside-down-scatter"
-    static let dailyCase = "case.daily"
 
     static func action(_ action: PetAction) -> String? {
         switch action {
@@ -112,9 +109,6 @@ enum CourtRecordID {
         "grab.\(region.rawValue)"
     }
 
-    static func caseCompletion(_ caseID: String) -> String {
-        "case.\(caseID).completed"
-    }
 }
 
 enum CourtRecordCatalog {
@@ -190,26 +184,9 @@ enum CourtRecordCatalog {
                 detail: "倒吊摇摆时，律师随身的道具散落了一地。",
                 lockedHint: "倒吊以后，试着让他左右摇摆。"
             ),
-            CourtRecordDefinition(
-                id: CourtRecordID.dailyCase,
-                category: .caseCompletion,
-                title: "今日一案",
-                detail: "接受过一份桌面上的短委托。",
-                lockedHint: "法庭记录里也许会出现新的委托。"
-            ),
         ]
 
-        let cases = DailyCaseLibrary.all.map { dailyCase in
-            CourtRecordDefinition(
-                id: CourtRecordID.caseCompletion(dailyCase.id),
-                category: .caseCompletion,
-                title: dailyCase.recordTitle,
-                detail: "成功指出了“\(dailyCase.title)”中的关键矛盾。",
-                lockedHint: "还有一份短委托等待找出矛盾。"
-            )
-        }
-
-        let catalog = classics + easterEggs + grabs + reactions + cases
+        let catalog = classics + easterEggs + grabs + reactions
         assert(Set(catalog.map(\.id)).count == catalog.count, "法庭记录条目 ID 不可重复")
         return catalog
     }()

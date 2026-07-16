@@ -9,7 +9,6 @@ enum PetInteractionMode: Equatable {
     case followUpPending
     case followUpChoosing
     case followUpBranch
-    case casePanel
     case courtRecordPanel
 
     var isFollowUp: Bool {

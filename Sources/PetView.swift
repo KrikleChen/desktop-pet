@@ -28,7 +28,6 @@ final class PetView: NSView {
     private var idleScheduler: IdleBehaviorScheduler!
     private var throwPhysicsController: ThrowPhysicsController?
     private var courtRecordPanelController: CourtRecordPanelController?
-    private var dailyCasePanelController: DailyCasePanelController?
     private var petTrackingArea: NSTrackingArea?
     private var isMouseInside = false
     private var followUpOriginAction: PetAction?
@@ -156,7 +155,7 @@ final class PetView: NSView {
             window: window,
             configuration: throwConfiguration
         )
-        controller.onStarted = { [weak self] state in
+        controller.onStarted = { [weak self] _ in
             guard let self else { return }
             self.cancelThrowRecovery()
             self.courtRecordStore.record(CourtRecordID.thrown)
@@ -166,11 +165,6 @@ final class PetView: NSView {
                 messageOverride: PetAction.thrown.phrase,
                 countAsInteraction: true
             )
-            self.applyThrowPose(state)
-        }
-        controller.onUpdated = { [weak self] state in
-            guard let self, self.currentAction == .thrown else { return }
-            self.applyThrowPose(state)
         }
         controller.onBounce = { [weak self, weak controller] _, _ in
             guard let self, let controller, controller.isRunning else { return }
@@ -178,18 +172,10 @@ final class PetView: NSView {
             guard now - self.lastThrowImpactTimestamp >= 0.28 else { return }
             self.lastThrowImpactTimestamp = now
             self.perform(.impact, autoReset: false)
-            self.scheduleThrowRecovery(after: 0.30) { [weak self, weak controller] in
+            // 碰撞台词至少稳定停留一小段时间，不能刚出现就被下一句替换。
+            self.scheduleThrowRecovery(after: 0.65) { [weak self, weak controller] in
                 guard let self, let controller, controller.isRunning else { return }
                 self.perform(.thrown, autoReset: false, messageOverride: "好痛……！")
-                self.applyThrowPose(
-                    ThrowPhysicsController.MotionState(
-                        velocity: controller.velocity,
-                        normalizedVelocity: controller.normalizedVelocity,
-                        normalizedSpeed: controller.normalizedSpeed,
-                        normalizedRotation: controller.normalizedRotation,
-                        windowFrame: self.window?.frame ?? .zero
-                    )
-                )
             }
         }
         controller.onSettled = { [weak self] _ in
@@ -239,7 +225,7 @@ final class PetView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard interactionMode != .casePanel, interactionMode != .courtRecordPanel else { return }
+        guard interactionMode != .courtRecordPanel else { return }
         clickWorkItem?.cancel()
         environmentWorkItem?.cancel()
         environmentDetectionGeneration &+= 1
@@ -406,14 +392,6 @@ final class PetView: NSView {
         courtRecordItem.target = self
         menu.addItem(courtRecordItem)
 
-        let dailyCaseItem = NSMenuItem(
-            title: "接受委托…",
-            action: #selector(showDailyCase),
-            keyEquivalent: ""
-        )
-        dailyCaseItem.target = self
-        menu.addItem(dailyCaseItem)
-
         let listenerEnabled = chatNameListener.status != .stopped
         let listenerTitle = listenerEnabled
             ? "关闭聊天名字监听"
@@ -496,8 +474,6 @@ final class PetView: NSView {
 
     @objc private func showCourtRecord() {
         cancelFollowUp(returnToIdle: true)
-        dailyCasePanelController?.close()
-        dailyCasePanelController = nil
         idleScheduler.noteUserInteraction()
 
         if let controller = courtRecordPanelController {
@@ -533,57 +509,6 @@ final class PetView: NSView {
         )
     }
 
-    @objc private func showDailyCase() {
-        cancelFollowUp(returnToIdle: true)
-        courtRecordPanelController?.close()
-        courtRecordPanelController = nil
-        dailyCasePanelController?.close()
-        dailyCasePanelController = nil
-        idleScheduler.noteUserInteraction()
-
-        let dailyCase = DailyCaseLibrary.caseForToday()
-        courtRecordStore.record(CourtRecordID.dailyCase)
-        let recordID = CourtRecordID.caseCompletion(dailyCase.id)
-        let controller = DailyCasePanelController(
-            dailyCase: dailyCase,
-            isPreviouslyCompleted: courtRecordStore.discoveredAt(for: recordID) != nil
-        )
-        controller.onIncorrect = { [weak self] _ in
-            guard let self else { return }
-            self.perform(
-                .sweat,
-                messageOverride: "这还不是直接矛盾，再换一组试试。",
-                countAsInteraction: true,
-                mode: .casePanel
-            )
-        }
-        controller.onCorrect = { [weak self, weak controller] solvedCase in
-            guard let self else { return }
-            if self.dailyCasePanelController === controller {
-                self.dailyCasePanelController = nil
-            }
-            self.courtRecordStore.record(CourtRecordID.caseCompletion(solvedCase.id))
-            self.perform(.objection, countAsInteraction: true, mode: .objectionBurst)
-        }
-        controller.isCasePreviouslyCompleted = { [weak self] candidate in
-            self?.courtRecordStore.discoveredAt(
-                for: CourtRecordID.caseCompletion(candidate.id)
-            ) != nil
-        }
-        controller.onClose = { [weak self, weak controller] in
-            guard let self else { return }
-            if self.dailyCasePanelController === controller {
-                self.dailyCasePanelController = nil
-            }
-            if self.interactionMode == .casePanel {
-                self.showIdle()
-            }
-        }
-        dailyCasePanelController = controller
-        showIdle(mode: .casePanel)
-        controller.show(relativeTo: window)
-    }
-
     @objc private func quitApplication() {
         cancelFollowUp(returnToIdle: false)
         NSApp.terminate(nil)
@@ -611,6 +536,8 @@ final class PetView: NSView {
         transition(to: nextMode)
         currentAction = action
         imageView.image = images[action]
+        imageView.isHidden = false
+        imageView.alphaValue = 1
         animate(action)
 
         if let recordID = CourtRecordID.action(action) {
@@ -642,8 +569,6 @@ final class PetView: NSView {
             switch self.interactionMode {
             case .followUpPending:
                 self.showIdle(mode: .followUpPending)
-            case .casePanel:
-                self.showIdle(mode: .casePanel)
             case .courtRecordPanel:
                 self.showIdle(mode: .courtRecordPanel)
             default:
@@ -802,15 +727,11 @@ final class PetView: NSView {
     }
 
     private func closeOpenFeaturePanels() {
-        if let controller = dailyCasePanelController {
-            dailyCasePanelController = nil
-            controller.close()
-        }
         if let controller = courtRecordPanelController {
             courtRecordPanelController = nil
             controller.close()
         }
-        if interactionMode == .casePanel || interactionMode == .courtRecordPanel {
+        if interactionMode == .courtRecordPanel {
             showIdle()
         }
     }
@@ -880,18 +801,6 @@ final class PetView: NSView {
         scheduleThrowRecovery(after: 5.7) { [weak self] in
             self?.showIdle()
         }
-    }
-
-    private func applyThrowPose(_ state: ThrowPhysicsController.MotionState) {
-        guard let layer = imageView.layer else { return }
-        let directionScale: CGFloat = state.velocity.dx < -80 ? -1 : 1
-        let lean = max(
-            -0.12,
-            min(0.12, state.normalizedVelocity.dy * 0.045 - state.normalizedVelocity.dx * 0.07)
-        )
-        var transform = CGAffineTransform(scaleX: directionScale, y: 1)
-        transform = transform.rotated(by: lean)
-        layer.setAffineTransform(transform)
     }
 
     private func scheduleThrowRecovery(
