@@ -1,6 +1,86 @@
 import AppKit
 import QuartzCore
 
+/// 可不创建窗口即验证的回收门闩：只有首次落地后的首次点击会生效。
+struct AccessoryReclaimState {
+    private(set) var hasLanded = false
+    private(set) var isReclaiming = false
+
+    @discardableResult
+    mutating func markLanded() -> Bool {
+        guard !hasLanded else { return false }
+        hasLanded = true
+        return true
+    }
+
+    @discardableResult
+    mutating func beginReclaim() -> Bool {
+        guard hasLanded, !isReclaiming else { return false }
+        isReclaiming = true
+        return true
+    }
+}
+
+/// 将回收终点约束在散落所属屏幕的可见区内。
+enum AccessoryReclaimGeometry {
+    static func destinationOrigin(
+        itemSize: NSSize,
+        near target: NSPoint,
+        inside visibleFrame: NSRect
+    ) -> NSPoint {
+        let maximumX = max(visibleFrame.minX, visibleFrame.maxX - itemSize.width)
+        let maximumY = max(visibleFrame.minY, visibleFrame.maxY - itemSize.height)
+        return NSPoint(
+            x: min(max(target.x - itemSize.width * 0.5, visibleFrame.minX), maximumX),
+            y: min(max(target.y - itemSize.height * 0.5, visibleFrame.minY), maximumY)
+        )
+    }
+}
+
+private final class AccessoryScatterPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+private final class AccessoryClickView: NSView {
+    let image: NSImage
+    var onPrimaryClick: (() -> Void)?
+
+    init(frame frameRect: NSRect, image: NSImage) {
+        self.image = image
+        super.init(frame: frameRect)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 0 else { return }
+        onPrimaryClick?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        image.draw(
+            in: bounds,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+    }
+}
+
 /// 仅用于调用方已经确认是 `.leg` 抓取后的左右倒吊摇摆识别。
 ///
 /// 调用顺序：
@@ -237,6 +317,14 @@ final class AccessoryScatterController {
     /// 参数为道具在本次抛出列表中的序号；每个道具首次触地只回调一次。
     var onItemLanded: ((Int) -> Void)?
 
+    /// 参数为道具在本次抛出列表中的序号；首次有效点击开始飞回时回调。
+    /// 调用方可在此同步播放接住动作和台词。
+    var onAccessoryReclaimed: ((Int) -> Void)?
+
+    /// 回收开始时动态取得桌宠当前手边的全局坐标；为空时退回散落起点。
+    /// 使用闭包而不是固定坐标，避免桌宠在道具落地后移动导致道具飞回旧位置。
+    var reclaimTargetProvider: (() -> NSPoint?)?
+
     /// 所有道具淡出释放，或显式取消一次正在进行的散落后回调。
     var onFinished: (() -> Void)?
 
@@ -246,9 +334,10 @@ final class AccessoryScatterController {
         let restitution: CGFloat
         var velocity: CGVector
         var restingDuration: TimeInterval = 0
-        var didReportLanding = false
+        var reclaimState = AccessoryReclaimState()
         var isSleeping = false
         var fadeWorkItem: DispatchWorkItem?
+        var animationGeneration = 0
 
         init(
             id: Int,
@@ -269,6 +358,7 @@ final class AccessoryScatterController {
     private var physicsTimer: Timer?
     private var lastPhysicsTimestamp: TimeInterval?
     private var targetVisibleFrame = NSRect.zero
+    private var reclaimAnchor = NSPoint.zero
     private var didFinishCurrentScatter = true
 
     var isActive: Bool { !items.isEmpty }
@@ -306,6 +396,7 @@ final class AccessoryScatterController {
             x: petWindowFrame.midX,
             y: petWindowFrame.midY
         )
+        reclaimAnchor = source
 
         for (index, image) in selectedImages.enumerated() {
             let item = makeItem(id: index, image: image, source: source)
@@ -370,7 +461,7 @@ final class AccessoryScatterController {
         )
         let frame = NSRect(origin: NSPoint(x: safeX, y: safeY), size: size)
 
-        let panel = NSPanel(
+        let panel = AccessoryScatterPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -393,15 +484,15 @@ final class AccessoryScatterController {
             .ignoresCycle
         ]
 
-        let imageView = NSImageView(frame: NSRect(origin: .zero, size: size))
-        imageView.image = image
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignCenter
-        panel.contentView = imageView
+        let clickView = AccessoryClickView(
+            frame: NSRect(origin: .zero, size: size),
+            image: image
+        )
+        panel.contentView = clickView
 
         let horizontalMagnitude = CGFloat.random(in: 125...285)
         let horizontalSign: CGFloat = Bool.random() ? 1 : -1
-        return ScatterItem(
+        let item = ScatterItem(
             id: id,
             panel: panel,
             velocity: CGVector(
@@ -410,6 +501,11 @@ final class AccessoryScatterController {
             ),
             restitution: CGFloat.random(in: 0.34...0.52)
         )
+        clickView.onPrimaryClick = { [weak self, weak item] in
+            guard let self, let item else { return }
+            self.reclaim(item: item)
+        }
+        return item
     }
 
     private func startPhysics() {
@@ -468,8 +564,8 @@ final class AccessoryScatterController {
         let floor = targetVisibleFrame.minY
         if frame.minY <= floor {
             frame.origin.y = floor
-            if !item.didReportLanding {
-                item.didReportLanding = true
+            if item.reclaimState.markLanded() {
+                item.panel.ignoresMouseEvents = false
                 onItemLanded?(item.id)
             }
 
@@ -500,18 +596,77 @@ final class AccessoryScatterController {
         }
     }
 
+    private func reclaim(item: ScatterItem) {
+        assert(Thread.isMainThread, "AccessoryScatterController 必须在主线程使用")
+        guard
+            items.contains(where: { $0 === item }),
+            item.reclaimState.beginReclaim()
+        else { return }
+
+        item.isSleeping = true
+        item.velocity = .zero
+        item.fadeWorkItem?.cancel()
+        item.fadeWorkItem = nil
+        item.animationGeneration &+= 1
+        let animationGeneration = item.animationGeneration
+        item.panel.ignoresMouseEvents = true
+
+        let currentTarget = reclaimTargetProvider?() ?? reclaimAnchor
+        let destination = AccessoryReclaimGeometry.destinationOrigin(
+            itemSize: item.panel.frame.size,
+            near: currentTarget,
+            inside: targetVisibleFrame
+        )
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.48
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            item.panel.animator().setFrameOrigin(destination)
+            item.panel.animator().alphaValue = 0
+        } completionHandler: { [weak self, weak item] in
+            guard
+                let self,
+                let item,
+                item.animationGeneration == animationGeneration,
+                item.reclaimState.isReclaiming,
+                self.items.contains(where: { $0 === item })
+            else { return }
+
+            item.panel.orderOut(nil)
+            self.items.removeAll { $0 === item }
+            self.finishIfNeeded()
+        }
+
+        if items.allSatisfy({ $0.isSleeping }) {
+            stopPhysics()
+        }
+        onAccessoryReclaimed?(item.id)
+    }
+
     private func scheduleFade(for item: ScatterItem) {
-        guard item.fadeWorkItem == nil else { return }
+        guard item.fadeWorkItem == nil, !item.reclaimState.isReclaiming else { return }
+        let animationGeneration = item.animationGeneration
         let workItem = DispatchWorkItem { [weak self, weak item] in
-            guard let self, let item else { return }
+            guard
+                let self,
+                let item,
+                item.animationGeneration == animationGeneration,
+                !item.reclaimState.isReclaiming,
+                self.items.contains(where: { $0 === item })
+            else { return }
+            item.fadeWorkItem = nil
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.65
                 context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 item.panel.animator().alphaValue = 0
             } completionHandler: { [weak self, weak item] in
-                guard let self, let item else { return }
+                guard
+                    let self,
+                    let item,
+                    item.animationGeneration == animationGeneration,
+                    !item.reclaimState.isReclaiming,
+                    self.items.contains(where: { $0 === item })
+                else { return }
                 item.panel.orderOut(nil)
-                item.fadeWorkItem = nil
                 self.items.removeAll { $0 === item }
                 self.finishIfNeeded()
             }

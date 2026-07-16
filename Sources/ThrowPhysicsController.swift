@@ -145,6 +145,12 @@ struct ThrowCollisionEdges: OptionSet {
 ///
 /// All methods that move the window are intended to be called on the main thread.
 final class ThrowPhysicsController {
+    enum ImpactSeverity: String, CaseIterable {
+        case light
+        case medium
+        case heavy
+    }
+
     struct Configuration {
         /// A deliberate flick should exceed this; ordinary drag releases should not.
         var minimumThrowSpeed: CGFloat = 850
@@ -158,6 +164,26 @@ final class ThrowPhysicsController {
         var frameInterval: TimeInterval = 1.0 / 60.0
         var maximumFlightDuration: TimeInterval = 8.0
         var maximumSubstepDistance: CGFloat = 18
+
+        /// Incoming speed normal to the contacted edge. With the app's 720 pt/s
+        /// throw threshold, a direct minimum-speed throw is medium, while a fall
+        /// accelerated by 1,600 pt/s² across a typical desktop reaches heavy.
+        var mediumImpactSpeed: CGFloat = 420
+        var heavyImpactSpeed: CGFloat = 1_100
+
+        func impactSeverity(forPreCollisionNormalSpeed speed: CGFloat) -> ImpactSeverity {
+            let mediumThreshold = max(0, mediumImpactSpeed)
+            let heavyThreshold = max(mediumThreshold, heavyImpactSpeed)
+            let clampedSpeed = max(0, speed)
+
+            if clampedSpeed >= heavyThreshold {
+                return .heavy
+            }
+            if clampedSpeed >= mediumThreshold {
+                return .medium
+            }
+            return .light
+        }
     }
 
     struct MotionState {
@@ -168,8 +194,87 @@ final class ThrowPhysicsController {
         let windowFrame: NSRect
     }
 
+    /// Collision information captured before restitution and tangential damping
+    /// mutate the velocity. `normalSpeed` is the strongest incoming normal
+    /// component if one timer tick contains a corner or multiple contacts.
+    struct BounceImpact {
+        let edges: ThrowCollisionEdges
+        let preCollisionVelocity: CGVector
+        let normalSpeed: CGFloat
+        let severity: ImpactSeverity
+
+        init?(
+            edges: ThrowCollisionEdges,
+            preCollisionVelocity: CGVector,
+            configuration: Configuration
+        ) {
+            let normalSpeed = Self.preCollisionNormalSpeed(
+                for: preCollisionVelocity,
+                against: edges
+            )
+            guard !edges.isEmpty, normalSpeed > 0 else { return nil }
+
+            self.edges = edges
+            self.preCollisionVelocity = preCollisionVelocity
+            self.normalSpeed = normalSpeed
+            severity = configuration.impactSeverity(forPreCollisionNormalSpeed: normalSpeed)
+        }
+
+        /// Returns only velocity directed into the supplied desktop edge. Motion
+        /// away from an edge contributes zero instead of being misread as impact.
+        static func preCollisionNormalSpeed(
+            for velocity: CGVector,
+            against edges: ThrowCollisionEdges
+        ) -> CGFloat {
+            var strongest: CGFloat = 0
+            if edges.contains(.left) {
+                strongest = max(strongest, -velocity.dx)
+            }
+            if edges.contains(.right) {
+                strongest = max(strongest, velocity.dx)
+            }
+            if edges.contains(.bottom) {
+                strongest = max(strongest, -velocity.dy)
+            }
+            if edges.contains(.top) {
+                strongest = max(strongest, velocity.dy)
+            }
+            return max(0, strongest)
+        }
+
+        fileprivate func merging(
+            _ other: BounceImpact,
+            configuration: Configuration
+        ) -> BounceImpact {
+            let strongest = other.normalSpeed > normalSpeed ? other : self
+            let mergedSpeed = max(normalSpeed, other.normalSpeed)
+            return BounceImpact(
+                edges: edges.union(other.edges),
+                preCollisionVelocity: strongest.preCollisionVelocity,
+                normalSpeed: mergedSpeed,
+                severity: configuration.impactSeverity(
+                    forPreCollisionNormalSpeed: mergedSpeed
+                )
+            )
+        }
+
+        private init(
+            edges: ThrowCollisionEdges,
+            preCollisionVelocity: CGVector,
+            normalSpeed: CGFloat,
+            severity: ImpactSeverity
+        ) {
+            self.edges = edges
+            self.preCollisionVelocity = preCollisionVelocity
+            self.normalSpeed = normalSpeed
+            self.severity = severity
+        }
+    }
+
     var onStarted: ((MotionState) -> Void)?
-    var onBounce: ((MotionState, ThrowCollisionEdges) -> Void)?
+    /// The motion state reflects the rebound; BounceImpact preserves the incoming
+    /// normal velocity so impact reactions never have to infer it from restitution.
+    var onBounce: ((MotionState, BounceImpact) -> Void)?
     var onSettled: ((MotionState) -> Void)?
 
     private(set) var isRunning = false
@@ -283,27 +388,30 @@ final class ThrowPhysicsController {
         let stepCount = max(1, min(16, Int(ceil(travelDistance / configuration.maximumSubstepDistance))))
         let substepDuration = CGFloat(deltaTime) / CGFloat(stepCount)
         var frame = window.frame
-        var collidedEdges: ThrowCollisionEdges = []
+        var bounceImpact: BounceImpact?
 
         for _ in 0..<stepCount {
             let displacement = CGVector(
                 dx: velocity.dx * substepDuration,
                 dy: velocity.dy * substepDuration
             )
-            let collision = advance(frame: &frame, displacement: displacement)
-            collidedEdges.formUnion(collision)
+            if let contact = advance(frame: &frame, displacement: displacement) {
+                bounceImpact = bounceImpact.map {
+                    $0.merging(contact, configuration: configuration)
+                } ?? contact
+            }
         }
 
         window.setFrameOrigin(frame.origin)
         updateNormalizedValues()
         let updatedState = motionState(for: window)
 
-        if !collidedEdges.isEmpty {
+        if let bounceImpact {
             let state = updatedState
-            onBounce?(state, collidedEdges)
+            onBounce?(state, bounceImpact)
             guard isRunning else { return }
 
-            let isOnFloor = collidedEdges.contains(.bottom)
+            let isOnFloor = bounceImpact.edges.contains(.bottom)
             if isOnFloor,
                abs(velocity.dy) <= configuration.settlementSpeed,
                abs(velocity.dx) <= configuration.settlementSpeed {
@@ -313,19 +421,23 @@ final class ThrowPhysicsController {
         }
     }
 
-    private func advance(frame: inout NSRect, displacement: CGVector) -> ThrowCollisionEdges {
+    private func advance(frame: inout NSRect, displacement: CGVector) -> BounceImpact? {
         let proposed = frame.offsetBy(dx: displacement.dx, dy: displacement.dy)
         if isFullyCoveredByVisibleDesktop(proposed) {
             frame = proposed
-            return []
+            return nil
         }
 
-        var collided: ThrowCollisionEdges = []
+        // 同一子步可能同时撞到水平和垂直边缘。先保留完整入射速度并收集
+        // 所有边缘，再统一分级；不能让第一个方向的阻尼污染第二个方向。
+        let preCollisionVelocity = velocity
+        var collidedEdges: ThrowCollisionEdges = []
         let horizontal = frame.offsetBy(dx: displacement.dx, dy: 0)
         if isFullyCoveredByVisibleDesktop(horizontal) {
             frame = horizontal
         } else if displacement.dx != 0 {
-            collided.insert(displacement.dx > 0 ? .right : .left)
+            let edge: ThrowCollisionEdges = displacement.dx > 0 ? .right : .left
+            collidedEdges.insert(edge)
             velocity.dx = -velocity.dx * configuration.edgeRestitution
             velocity.dy *= configuration.tangentialDamping
         }
@@ -334,12 +446,17 @@ final class ThrowPhysicsController {
         if isFullyCoveredByVisibleDesktop(vertical) {
             frame = vertical
         } else if displacement.dy != 0 {
-            collided.insert(displacement.dy > 0 ? .top : .bottom)
+            let edge: ThrowCollisionEdges = displacement.dy > 0 ? .top : .bottom
+            collidedEdges.insert(edge)
             velocity.dy = -velocity.dy * configuration.edgeRestitution
             velocity.dx *= configuration.tangentialDamping
         }
 
-        return collided
+        return BounceImpact(
+            edges: collidedEdges,
+            preCollisionVelocity: preCollisionVelocity,
+            configuration: configuration
+        )
     }
 
     /// Checks whether every part of the pet window is covered by the union of all

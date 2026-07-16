@@ -54,6 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 petView.preview(action)
             }
         }
+        if let flagIndex = launchArguments.firstIndex(of: "--preview-edge-idle"),
+           launchArguments.indices.contains(flagIndex + 1),
+           let edge = EdgeIdleBehavior.Edge(rawValue: launchArguments[flagIndex + 1]) {
+            NSLog("桌宠验收预览边缘待机：%@", edge.rawValue)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                petView.previewEdgeIdle(edge)
+            }
+        }
 
         NSApp.activate(ignoringOtherApps: false)
     }

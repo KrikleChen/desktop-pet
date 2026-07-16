@@ -87,6 +87,7 @@ enum CourtRecordID {
     static let nameResponse = "response.heard-name"
     static let thrown = "physics.thrown"
     static let upsideDownScatter = "physics.upside-down-scatter"
+    static let edgeRest = "environment.edge-rest"
 
     static func action(_ action: PetAction) -> String? {
         switch action {
@@ -184,6 +185,13 @@ enum CourtRecordCatalog {
                 detail: "倒吊摇摆时，律师随身的道具散落了一地。",
                 lockedHint: "倒吊以后，试着让他左右摇摆。"
             ),
+            CourtRecordDefinition(
+                id: CourtRecordID.edgeRest,
+                category: .environment,
+                title: "边缘观察",
+                detail: "长时间靠近屏幕边缘时，他停下来观察了周围。",
+                lockedHint: "让他在屏幕边缘安静待上一阵。"
+            ),
         ]
 
         let catalog = classics + easterEggs + grabs + reactions
@@ -209,6 +217,18 @@ enum CourtRecordCatalog {
             detail: detail,
             lockedHint: hint
         )
+    }
+}
+
+/// 统一动作图鉴写入入口，允许构建验收预览明确关闭真实进度记录。
+enum CourtRecordActionRecorder {
+    static func record(
+        _ action: PetAction,
+        in store: CourtRecordStore,
+        enabled: Bool = true
+    ) {
+        guard enabled, let recordID = CourtRecordID.action(action) else { return }
+        store.record(recordID)
     }
 }
 

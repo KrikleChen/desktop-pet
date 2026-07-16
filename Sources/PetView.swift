@@ -14,6 +14,12 @@ final class PetView: NSView {
     private let dragVelocityTracker = DragVelocityTracker()
     private let shakeGestureDetector = ShakeGestureDetector()
     private let accessoryScatterController = AccessoryScatterController()
+    private var interactionMemory = InteractionMemory()
+    private var edgeIdleBehavior = EdgeIdleBehavior(configuration: .init(
+        stableDuration: 0,
+        minimumIdleDuration: 60,
+        cooldownDuration: 180
+    ))
 
     private var currentAction: PetAction = .idle
     private var interactionMode: PetInteractionMode = .ordinary
@@ -33,6 +39,8 @@ final class PetView: NSView {
     private var followUpOriginAction: PetAction?
     private var accessoryImages: [NSImage] = []
     private var lastThrowImpactTimestamp: TimeInterval = 0
+    private var strongestThrowImpact: ThrowPhysicsController.ImpactSeverity = .light
+    private var lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
     private var lastNameListenerStatus: ChatNameListener.Status = .stopped
     private var environmentDetectionGeneration = 0
 
@@ -72,6 +80,28 @@ final class PetView: NSView {
         }
 
         accessoryImages = Self.loadAccessoryImages()
+        accessoryScatterController.reclaimTargetProvider = { [weak self] in
+            guard let frame = self?.window?.frame else { return nil }
+            return NSPoint(x: frame.midX + 28, y: frame.minY + 108)
+        }
+        accessoryScatterController.onAccessoryReclaimed = { [weak self] itemID in
+            guard let self, !self.didDrag else { return }
+            self.cancelFollowUp(returnToIdle: false)
+            let response: (action: PetAction, message: String)
+            switch itemID {
+            case 0:
+                response = (.badgeToss, "律师徽章可不能弄丢……接住了！")
+            case 2:
+                response = (.magatama, "勾玉也回来了。得好好收着。")
+            default:
+                response = (.evidence, "接住了。证物还是归档比较安全。")
+            }
+            self.perform(
+                response.action,
+                messageOverride: response.message,
+                countAsInteraction: true
+            )
+        }
 
         showIdle()
         showTemporaryMessage("单击随机动作 · 双击异议 · 右键菜单", duration: 4.0)
@@ -83,8 +113,7 @@ final class PetView: NSView {
                 && !self.didDrag
         }
         idleScheduler.onIdleOpportunity = { [weak self] in
-            guard let action = PetAction.lowFrequencyIdleActions.randomElement() else { return }
-            self?.performAmbientIdleAction(action)
+            self?.performScheduledIdleOpportunity()
         }
         idleScheduler.start()
 
@@ -92,7 +121,23 @@ final class PetView: NSView {
             guard let self, !self.didDrag else { return }
             self.cancelFollowUp(returnToIdle: false)
             self.courtRecordStore.record(CourtRecordID.nameResponse)
-            self.perform(.heardName, countAsInteraction: true)
+            let response = self.interactionMemory.recordNameCall(
+                at: ProcessInfo.processInfo.systemUptime
+            )
+            let message: String
+            switch response {
+            case .first:
+                message = "你在叫我吗？"
+            case .again:
+                message = "又在叫我？我听见了。"
+            case .exasperated:
+                message = "……我真的听见了，不用一直叫。"
+            }
+            self.perform(
+                .heardName,
+                messageOverride: message,
+                countAsInteraction: true
+            )
         }
         chatNameListener.onStatusChanged = { [weak self] status in
             guard let self, status != self.lastNameListenerStatus else { return }
@@ -158,28 +203,63 @@ final class PetView: NSView {
         controller.onStarted = { [weak self] _ in
             guard let self else { return }
             self.cancelThrowRecovery()
+            self.strongestThrowImpact = .light
+            self.lastThrowImpactTimestamp = 0
             self.courtRecordStore.record(CourtRecordID.thrown)
+            let teasingStage = self.interactionMemory.teasingStage(
+                at: ProcessInfo.processInfo.systemUptime
+            )
+            let message: String
+            switch teasingStage {
+            case .normal:
+                message = "哇啊——！"
+            case .irritated:
+                message = "又扔？！我正式抗议！"
+            case .resigned:
+                message = "……我就知道最后会被扔出去。"
+            }
             self.perform(
                 .thrown,
                 autoReset: false,
-                messageOverride: PetAction.thrown.phrase,
+                messageOverride: message,
                 countAsInteraction: true
             )
         }
-        controller.onBounce = { [weak self, weak controller] _, _ in
+        controller.onBounce = { [weak self, weak controller] _, impact in
             guard let self, let controller, controller.isRunning else { return }
+            self.rememberStrongestImpact(impact.severity)
             let now = ProcessInfo.processInfo.systemUptime
             guard now - self.lastThrowImpactTimestamp >= 0.28 else { return }
             self.lastThrowImpactTimestamp = now
-            self.perform(.impact, autoReset: false)
+            self.cancelThrowRecovery()
+            let impactAction: PetAction = impact.severity == .light ? .dropped : .impact
+            let impactMessage: String
+            let afterMessage: String
+            switch impact.severity {
+            case .light:
+                impactMessage = "唔！"
+                afterMessage = "只是轻轻碰了一下……"
+            case .medium:
+                impactMessage = "痛！"
+                afterMessage = "好痛……！"
+            case .heavy:
+                impactMessage = "痛——！"
+                afterMessage = "这已经不是搬家了吧？！"
+            }
+            self.perform(
+                impactAction,
+                autoReset: false,
+                messageOverride: impactMessage
+            )
             // 碰撞台词至少稳定停留一小段时间，不能刚出现就被下一句替换。
             self.scheduleThrowRecovery(after: 0.65) { [weak self, weak controller] in
                 guard let self, let controller, controller.isRunning else { return }
-                self.perform(.thrown, autoReset: false, messageOverride: "好痛……！")
+                self.perform(.thrown, autoReset: false, messageOverride: afterMessage)
             }
         }
         controller.onSettled = { [weak self] _ in
-            self?.beginThrowLandingRecovery()
+            guard let self else { return }
+            self.beginThrowLandingRecovery(severity: self.strongestThrowImpact)
         }
         throwPhysicsController = controller
     }
@@ -251,7 +331,7 @@ final class PetView: NSView {
         }
         cancelThrowRecovery()
 
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
         transition(to: .mousePressed)
         mouseDownLocation = NSEvent.mouseLocation
         windowOriginOnMouseDown = window?.frame.origin ?? .zero
@@ -348,7 +428,7 @@ final class PetView: NSView {
         clickWorkItem?.cancel()
         cancelFollowUp(returnToIdle: true)
         closeOpenFeaturePanels()
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
         let menu = NSMenu(title: "成步堂桌宠")
 
         for action in [PetAction.objection, .slam, .think, .sweat, .evidence, .idle] {
@@ -446,7 +526,7 @@ final class PetView: NSView {
     @objc private func showHelp() {
         cancelFollowUp(returnToIdle: false)
         showIdle()
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
         showTemporaryMessage("单击随机 · 双击异议 · 拖动搬家", duration: 3.5)
     }
 
@@ -474,7 +554,7 @@ final class PetView: NSView {
 
     @objc private func showCourtRecord() {
         cancelFollowUp(returnToIdle: true)
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
 
         if let controller = courtRecordPanelController {
             transition(to: .courtRecordPanel)
@@ -499,7 +579,7 @@ final class PetView: NSView {
 
     @objc private func requestBackgroundPermission() {
         cancelFollowUp(returnToIdle: false)
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
         let granted = BackgroundBrightnessDetector.shared.requestPermission()
         showTemporaryMessage(
             granted
@@ -520,15 +600,21 @@ final class PetView: NSView {
         perform(action)
     }
 
+    /// 仅供本地构建验收预览低频边缘待机，不加入用户右键菜单。
+    func previewEdgeIdle(_ edge: EdgeIdleBehavior.Edge) {
+        performEdgeIdle(edge, recordsDiscovery: false)
+    }
+
     private func perform(
         _ action: PetAction,
         autoReset: Bool = true,
         messageOverride: String? = nil,
         countAsInteraction: Bool = false,
-        mode: PetInteractionMode? = nil
+        mode: PetInteractionMode? = nil,
+        recordsInCourtRecord: Bool = true
     ) {
         if countAsInteraction {
-            idleScheduler.noteUserInteraction()
+            noteExplicitInteraction()
         }
         resetWorkItem?.cancel()
         bubbleWorkItem?.cancel()
@@ -540,9 +626,11 @@ final class PetView: NSView {
         imageView.alphaValue = 1
         animate(action)
 
-        if let recordID = CourtRecordID.action(action) {
-            courtRecordStore.record(recordID)
-        }
+        CourtRecordActionRecorder.record(
+            action,
+            in: courtRecordStore,
+            enabled: recordsInCourtRecord
+        )
 
         if action == .objection {
             bubbleView.hide()
@@ -590,6 +678,113 @@ final class PetView: NSView {
         animate(.idle)
     }
 
+    private func noteExplicitInteraction() {
+        lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
+        edgeIdleBehavior.resetCandidate()
+        idleScheduler?.noteUserInteraction()
+    }
+
+    private func performScheduledIdleOpportunity() {
+        guard
+            interactionMode == .ordinary,
+            currentAction == .idle,
+            !didDrag
+        else { return }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if let window,
+           let screen = window.screen ?? NSScreen.screens.first,
+           let edge = edgeIdleBehavior.evaluate(
+               windowFrame: window.frame,
+               screenVisibleFrame: screen.visibleFrame,
+               idleDuration: max(0, now - lastExplicitInteractionTimestamp),
+               now: now,
+               eligibility: true
+           ) {
+            performEdgeIdle(edge)
+            return
+        }
+
+        guard let action = PetAction.lowFrequencyIdleActions.randomElement() else { return }
+        performAmbientIdleAction(action)
+    }
+
+    private func performEdgeIdle(
+        _ edge: EdgeIdleBehavior.Edge,
+        recordsDiscovery: Bool = true
+    ) {
+        if recordsDiscovery {
+            courtRecordStore.record(CourtRecordID.edgeRest)
+        }
+        let message: String
+        let xOffset: CGFloat
+        let yOffset: CGFloat
+        let rotation: CGFloat
+        let scaleY: CGFloat
+        switch edge {
+        case .left:
+            message = "从左边观察一下。"
+            xOffset = -34
+            yOffset = -12
+            rotation = -0.035
+            scaleY = 0.94
+        case .right:
+            message = "从右边观察一下。"
+            xOffset = 34
+            yOffset = -12
+            rotation = 0.035
+            scaleY = 0.94
+        case .bottom:
+            message = "这里视野不错。"
+            xOffset = 0
+            // 让窗口底边遮住腿部，现有思考立姿才会读成“坐在桌面边缘”。
+            yOffset = -38
+            rotation = 0
+            scaleY = 0.82
+        }
+
+        perform(
+            .think,
+            autoReset: false,
+            messageOverride: message,
+            recordsInCourtRecord: recordsDiscovery
+        )
+        imageView.layer?.removeAllAnimations()
+        addKeyframes(
+            keyPath: "transform.translation.x",
+            values: [0, xOffset * 1.12, xOffset],
+            duration: 0.55,
+            holdFinalValue: true
+        )
+        addKeyframes(
+            keyPath: "transform.translation.y",
+            values: [0, yOffset * 1.08, yOffset],
+            duration: 0.55,
+            holdFinalValue: true
+        )
+        addKeyframes(
+            keyPath: "transform.scale.y",
+            values: [1, scaleY * 0.97, scaleY],
+            duration: 0.55,
+            holdFinalValue: true
+        )
+        if rotation != 0 {
+            addKeyframes(
+                keyPath: "transform.rotation.z",
+                values: [0, rotation, rotation],
+                duration: 0.55,
+                holdFinalValue: true
+            )
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, !self.didDrag else { return }
+            self.showIdle()
+        }
+        resetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: workItem)
+    }
+
     private func performAmbientIdleAction(_ action: PetAction) {
         guard interactionMode == .ordinary, currentAction == .idle, !didDrag else { return }
         perform(action)
@@ -622,7 +817,7 @@ final class PetView: NSView {
         clickWorkItem?.cancel()
         followUpExpirationWorkItem?.cancel()
         resetWorkItem?.cancel()
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
         followUpHotspotView.isHidden = true
         followUpChoiceView.isHidden = false
         perform(
@@ -644,7 +839,7 @@ final class PetView: NSView {
         followUpExpirationWorkItem?.cancel()
         followUpChoiceView.isHidden = true
         transition(to: .followUpBranch)
-        idleScheduler.noteUserInteraction()
+        noteExplicitInteraction()
 
         switch branch {
         case .askAboutCase:
@@ -743,14 +938,49 @@ final class PetView: NSView {
         let region = activeGrabRegion ?? .collarTorso
         courtRecordStore.record(CourtRecordID.grab(region))
         let actions = heldActions(for: region)
-        perform(actions.struggle, autoReset: false, mode: .dragging)
+        let interaction: InteractionMemory.TeasingInteraction = region == .leg
+            ? .legDrag
+            : .grab
+        let teasingStage = interactionMemory.recordTeasing(
+            interaction,
+            at: ProcessInfo.processInfo.systemUptime
+        )
+
+        switch teasingStage {
+        case .normal:
+            perform(actions.struggle, autoReset: false, mode: .dragging)
+        case .irritated:
+            perform(
+                actions.struggle,
+                autoReset: false,
+                messageOverride: "又来？！我真的要抗议了！",
+                mode: .dragging
+            )
+        case .resigned:
+            perform(
+                actions.resigned,
+                autoReset: false,
+                messageOverride: "……我就知道你还会来。",
+                mode: .dragging
+            )
+            return
+        }
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, self.didDrag else { return }
-            self.perform(actions.resigned, autoReset: false, mode: .dragging)
+            let message = teasingStage == .irritated
+                ? "……你到底还要闹几次。"
+                : nil
+            self.perform(
+                actions.resigned,
+                autoReset: false,
+                messageOverride: message,
+                mode: .dragging
+            )
         }
         dragResignWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: workItem)
+        let resignDelay: TimeInterval = teasingStage == .irritated ? 1.4 : 2.2
+        DispatchQueue.main.asyncAfter(deadline: .now() + resignDelay, execute: workItem)
     }
 
     private func heldActions(for region: GrabRegion) -> (struggle: PetAction, resigned: PetAction) {
@@ -789,17 +1019,77 @@ final class PetView: NSView {
         )
     }
 
-    private func beginThrowLandingRecovery() {
+    private func rememberStrongestImpact(_ candidate: ThrowPhysicsController.ImpactSeverity) {
+        func rank(_ severity: ThrowPhysicsController.ImpactSeverity) -> Int {
+            switch severity {
+            case .light: return 0
+            case .medium: return 1
+            case .heavy: return 2
+            }
+        }
+        if rank(candidate) > rank(strongestThrowImpact) {
+            strongestThrowImpact = candidate
+        }
+    }
+
+    private func beginThrowLandingRecovery(
+        severity: ThrowPhysicsController.ImpactSeverity
+    ) {
         cancelThrowRecovery()
-        perform(.dizzy, autoReset: false, countAsInteraction: true)
-        scheduleThrowRecovery(after: 2.2) { [weak self] in
-            self?.perform(.dusting, autoReset: false)
-        }
-        scheduleThrowRecovery(after: 3.7) { [weak self] in
-            self?.perform(.irritated, autoReset: false)
-        }
-        scheduleThrowRecovery(after: 5.7) { [weak self] in
-            self?.showIdle()
+        switch severity {
+        case .light:
+            // 轻碰只做短促的揉头恢复，不进入拍灰和生气链。
+            perform(
+                .dizzy,
+                autoReset: false,
+                messageOverride: "嘶……只是撞到头了。"
+            )
+            imageView.layer?.removeAllAnimations()
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [0, -2, 1, 0],
+                duration: 0.65
+            )
+            scheduleThrowRecovery(after: 1.8) { [weak self] in
+                self?.showIdle()
+            }
+
+        case .medium:
+            perform(
+                .dizzy,
+                autoReset: false,
+                messageOverride: "有点晕……先让我缓一下。"
+            )
+            scheduleThrowRecovery(after: 2.0) { [weak self] in
+                self?.perform(
+                    .dusting,
+                    autoReset: false,
+                    messageOverride: "西装也沾上灰了……"
+                )
+            }
+            scheduleThrowRecovery(after: 3.6) { [weak self] in
+                self?.showIdle()
+            }
+
+        case .heavy:
+            perform(
+                .dizzy,
+                autoReset: false,
+                messageOverride: "天地都在转……这下真的很重！"
+            )
+            scheduleThrowRecovery(after: 2.2) { [weak self] in
+                self?.perform(.dusting, autoReset: false)
+            }
+            scheduleThrowRecovery(after: 3.7) { [weak self] in
+                self?.perform(
+                    .irritated,
+                    autoReset: false,
+                    messageOverride: "下次绝对不许这样扔！"
+                )
+            }
+            scheduleThrowRecovery(after: 5.7) { [weak self] in
+                self?.showIdle()
+            }
         }
     }
 
@@ -1135,7 +1425,8 @@ final class PetView: NSView {
         values: [CGFloat],
         duration: TimeInterval,
         repeatCount: Float = 0,
-        autoreverses: Bool = false
+        autoreverses: Bool = false,
+        holdFinalValue: Bool = false
     ) {
         let animation = CAKeyframeAnimation(keyPath: keyPath)
         animation.values = values
@@ -1143,6 +1434,10 @@ final class PetView: NSView {
         animation.repeatCount = repeatCount
         animation.autoreverses = autoreverses
         animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        if holdFinalValue {
+            animation.fillMode = .forwards
+            animation.isRemovedOnCompletion = false
+        }
         imageView.layer?.add(animation, forKey: keyPath)
     }
 }
