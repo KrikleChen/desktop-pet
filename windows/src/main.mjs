@@ -120,6 +120,15 @@ function registerIPC() {
     return result;
   });
 
+  ipcMain.handle("edge-context", (event) => {
+    if (!isPetSender(event) || !petWindow || petWindow.isDestroyed()) return undefined;
+    const windowFrame = petWindow.getBounds();
+    return {
+      windowFrame,
+      workArea: screen.getDisplayMatching(windowFrame).workArea,
+    };
+  });
+
   ipcMain.on("drag-start", (event, point) => {
     if (!isPetSender(event) || !validPoint(point) || !petWindow) return;
     stopThrow();

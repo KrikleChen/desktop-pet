@@ -8,6 +8,7 @@ import {
   ShuffleBag,
   TeasingMemory,
 } from "../shared/game-models.mjs";
+import { EdgeIdleBehavior } from "../shared/edge-idle.mjs";
 import { buildCharacterMask, detectGrabRegion } from "../shared/grab-region.mjs";
 
 const ACTIONS = Object.freeze({
@@ -104,6 +105,10 @@ const dom = {
   dialogueText: document.querySelector("#dialogue-text"),
   toast: document.querySelector("#unlock-toast"),
   objection: document.querySelector("#objection-burst"),
+  edgeMotion: document.querySelector("#edge-motion"),
+  edgeStrokes: [...document.querySelectorAll(".edge-stroke")],
+  edgeScan: document.querySelector(".edge-scan"),
+  edgeMarker: document.querySelector(".edge-marker"),
   followUpHotspot: document.querySelector("#follow-up-hotspot"),
   followUpChoices: document.querySelector("#follow-up-choices"),
   followUpCase: document.querySelector("#follow-up-case"),
@@ -125,6 +130,7 @@ const orderedRound = new OrderedArchiveRound();
 const crossRound = new CrossExaminationRound();
 const shakeDetector = new ShakeDetector();
 const teasingMemory = new TeasingMemory();
+const edgeIdleBehavior = new EdgeIdleBehavior();
 const grabMaskCache = new Map();
 const collection = new Set();
 const courtProgress = migrateCourtProgress(loadJSON("court-progress", {}));
@@ -145,6 +151,9 @@ let isMouseInside = false;
 let followUpState;
 let followUpTimer;
 let followUpSequenceTimers = [];
+let lastExplicitInteractionAt = performance.now();
+let edgeRestState;
+let edgeRestTimers = [];
 let currentGrabMask;
 let activeAsset = "idle";
 let dragResignTimer;
@@ -393,6 +402,7 @@ function handleMenuCommand({ command, value }) {
 }
 
 function performAction(name, options = {}) {
+  clearEdgeRest();
   const definition = ACTIONS[name] ?? ACTIONS.idle;
   const {
     message = definition.phrase,
@@ -427,6 +437,7 @@ function performAction(name, options = {}) {
 }
 
 function showIdle() {
+  clearEdgeRest();
   clearTimeout(actionTimer);
   actionTimer = undefined;
   if (crossToken) return;
@@ -1000,6 +1011,9 @@ function presentCourtRecordWindow() {
 
 function markInteraction() {
   cancelThrowRecovery();
+  clearEdgeRest();
+  lastExplicitInteractionAt = performance.now();
+  edgeIdleBehavior.resetCandidate();
   suspendToast();
   clearTimeout(idleTimer);
   idleTimer = undefined;
@@ -1016,21 +1030,135 @@ function scheduleIdle({ reset = false, useInitial = false } = {}) {
     : profile.minimumMs + Math.random() * (profile.maximumMs - profile.minimumMs);
   idleTimer = setTimeout(() => {
     idleTimer = undefined;
-    const trulyIdle = currentAction === "idle"
-      && !crossToken
-      && !courtRecordOpen
-      && !followUpState
-      && activeAccessorySession === undefined;
-    if (trulyIdle && Math.random() <= profile.probability) {
-      const ambientAction = ambientBag.next(AMBIENT_ACTIONS);
-      performAction(ambientAction, { record: true });
-      if (["think", "evidence", "badge-toss"].includes(ambientAction)) {
-        beginPendingFollowUp();
-      }
-    } else {
-      scheduleIdle();
-    }
+    void performScheduledIdleOpportunity(profile);
   }, delay);
+}
+
+async function performScheduledIdleOpportunity(profile) {
+  if (!isTrulyIdle() || Math.random() > profile.probability) {
+    scheduleIdle();
+    return;
+  }
+
+  const now = performance.now();
+  let context;
+  try {
+    context = await window.desktopPet.edgeContext();
+  } catch {
+    context = undefined;
+  }
+  if (!isTrulyIdle()) {
+    scheduleIdle();
+    return;
+  }
+
+  const edge = edgeIdleBehavior.evaluate({
+    windowFrame: context?.windowFrame,
+    workArea: context?.workArea,
+    idleDurationMs: Math.max(0, now - lastExplicitInteractionAt),
+    now,
+    eligibility: true,
+  });
+  if (edge) {
+    performEdgeIdle(edge);
+    return;
+  }
+
+  const ambientAction = ambientBag.next(AMBIENT_ACTIONS);
+  performAction(ambientAction, { record: true });
+  if (["think", "evidence", "badge-toss"].includes(ambientAction)) {
+    beginPendingFollowUp();
+  }
+}
+
+function isTrulyIdle() {
+  return currentAction === "idle"
+    && !crossToken
+    && !courtRecordOpen
+    && !followUpState
+    && !edgeRestState
+    && activeAccessorySession === undefined;
+}
+
+function performEdgeIdle(edge) {
+  const message = edge === "left" ? "从左边观察一下。"
+    : edge === "right" ? "从右边观察一下。" : "这里视野不错。";
+  performAction("think", { message, autoReset: false, record: true });
+  recordCourtEntry("environment.edge-rest");
+  edgeRestState = edge;
+  dom.image.classList.add("action-edge-rest", `edge-${edge}`);
+  configureEdgeMotion(edge, false);
+  dom.edgeMotion.setAttribute("class", `edge-motion entrance edge-${edge}`);
+  scheduleEdgeRestStep(620, () => {
+    if (edgeRestState === edge) dom.edgeMotion.setAttribute("class", `edge-motion ambient edge-${edge}`);
+  });
+  scheduleEdgeRestStep(6_000, () => playEdgeRestExit(edge));
+}
+
+function playEdgeRestExit(edge) {
+  if (edgeRestState !== edge) return;
+  configureEdgeMotion(edge, true);
+  dom.edgeMotion.setAttribute("class", `edge-motion exiting edge-${edge}`);
+  scheduleEdgeRestStep(480, showIdle);
+}
+
+function scheduleEdgeRestStep(delay, operation) {
+  const timer = setTimeout(() => {
+    edgeRestTimers = edgeRestTimers.filter((candidate) => candidate !== timer);
+    operation();
+  }, delay);
+  edgeRestTimers.push(timer);
+}
+
+function clearEdgeRest() {
+  edgeRestTimers.forEach(clearTimeout);
+  edgeRestTimers = [];
+  edgeRestState = undefined;
+  dom.edgeMotion.setAttribute("class", "edge-motion hidden");
+  dom.image.classList.remove("action-edge-rest", "edge-left", "edge-right", "edge-bottom");
+}
+
+function configureEdgeMotion(edge, reversed) {
+  const strokes = edgeMotionStrokes(edge);
+  dom.edgeStrokes.forEach((path, index) => {
+    path.setAttribute("pathLength", "1");
+    path.setAttribute("d", quadraticPath(strokes[index], reversed));
+  });
+  const scan = edgeMotionScan(edge);
+  const scanPath = quadraticPath(scan, false);
+  dom.edgeScan.setAttribute("pathLength", "1");
+  dom.edgeScan.setAttribute("d", scanPath);
+  dom.edgeMarker.style.offsetPath = `path("${scanPath}")`;
+}
+
+function quadraticPath([start, control, end], reversed) {
+  const [from, to] = reversed ? [end, start] : [start, end];
+  const point = ([x, y]) => `${(x * 240).toFixed(2)} ${((1 - y) * 189).toFixed(2)}`;
+  return `M ${point(from)} Q ${point(control)} ${point(to)}`;
+}
+
+function edgeMotionStrokes(edge) {
+  if (edge === "left") return [
+    [[.56, .68], [.31, .78], [.07, .72]],
+    [[.48, .49], [.25, .55], [.05, .46]],
+    [[.43, .31], [.22, .27], [.09, .20]],
+  ];
+  if (edge === "right") return [
+    [[.44, .68], [.69, .78], [.93, .72]],
+    [[.52, .49], [.75, .55], [.95, .46]],
+    [[.57, .31], [.78, .27], [.91, .20]],
+  ];
+  return [
+    [[.30, .72], [.24, .42], [.20, .08]],
+    [[.50, .82], [.53, .46], [.50, .06]],
+    [[.70, .70], [.77, .38], [.81, .10]],
+  ];
+}
+
+function edgeMotionScan(edge) {
+  if (edge === "left") return [[.11, .22], [.45, .52], [.13, .82]];
+  if (edge === "right") return [[.89, .22], [.55, .52], [.87, .82]];
+  return [[.20, .13], [.50, .54], [.80, .13]];
 }
 
 function scheduleQuietExpiry() {

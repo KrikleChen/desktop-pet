@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("desktopPet", {
   platform: process.platform,
   assetUrl: (fileName) => ipcRenderer.invoke("asset-url", fileName),
   assetMask: (fileName) => ipcRenderer.invoke("asset-mask", fileName),
+  edgeContext: () => ipcRenderer.invoke("edge-context"),
   dragStart: (x, y) => ipcRenderer.send("drag-start", { x, y }),
   dragMove: (x, y) => ipcRenderer.send("drag-move", { x, y }),
   dragEnd: (x, y) => ipcRenderer.send("drag-end", { x, y }),

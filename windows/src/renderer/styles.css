@@ -28,6 +28,7 @@ button { font: inherit; }
 
 #pet-stage {
   position: absolute;
+  z-index: 2;
   left: 18px;
   right: 18px;
   bottom: 0;
@@ -74,6 +75,73 @@ button { font: inherit; }
 #pet-image.action-dusting { animation: action-dusting 550ms ease-in-out 2; }
 #pet-image.action-irritated { animation: action-irritated 460ms ease-out; }
 #pet-image.action-light-recovery { animation: action-light-recovery 650ms ease-in-out; }
+
+#pet-image.action-edge-rest.edge-left {
+  animation: edge-rest-left 550ms ease-out forwards;
+}
+
+#pet-image.action-edge-rest.edge-right {
+  animation: edge-rest-right 550ms ease-out forwards;
+}
+
+#pet-image.action-edge-rest.edge-bottom {
+  animation: edge-rest-bottom 550ms ease-out forwards;
+}
+
+.edge-motion {
+  position: absolute;
+  z-index: 1;
+  bottom: 0;
+  left: 0;
+  width: 240px;
+  height: 190px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.edge-stroke,
+.edge-scan {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+}
+
+.edge-stroke { stroke-width: 1.45px; }
+.edge-stroke.stroke-a { stroke: rgb(168 214 255 / 72%); }
+.edge-stroke.stroke-b { stroke: rgb(230 245 255 / 78%); stroke-width: 1.85px; }
+.edge-stroke.stroke-c { stroke: rgb(240 184 69 / 70%); stroke-width: 1.15px; }
+.edge-motion.entrance .edge-stroke {
+  animation: edge-direction-in 460ms ease-out forwards;
+}
+.edge-motion.entrance .stroke-b,
+.edge-motion.exiting .stroke-b { animation-delay: 55ms; }
+.edge-motion.entrance .stroke-c,
+.edge-motion.exiting .stroke-c { animation-delay: 110ms; }
+.edge-motion.exiting .edge-stroke {
+  animation: edge-direction-out 380ms ease-in forwards;
+}
+
+.edge-scan {
+  stroke: rgb(168 214 255 / 72%);
+  stroke-width: 1.25px;
+  stroke-dasharray: 5 4;
+}
+
+.edge-marker {
+  fill: rgb(240 184 69 / 70%);
+  opacity: 0;
+  offset-anchor: center;
+  offset-distance: 0%;
+}
+
+.edge-motion.ambient .edge-scan {
+  animation: edge-ambient-scan 2050ms ease-in-out 2050ms infinite;
+}
+
+.edge-motion.ambient .edge-marker {
+  animation: edge-ambient-marker 2050ms ease-in-out 2050ms infinite;
+}
 
 .dialogue {
   --dialogue-accent: rgb(43 87 148);
@@ -749,6 +817,55 @@ button { font: inherit; }
 @keyframes follow-up-in {
   from { opacity: 0; transform: scale(.88); }
   to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes edge-rest-left {
+  0% { transform: translate(0, 0) scaleY(1) rotate(0); }
+  70% { transform: translate(-38.08px, 12.96px) scaleY(.9118) rotate(-2deg); }
+  100% { transform: translate(-34px, 12px) scaleY(.94) rotate(-2deg); }
+}
+
+@keyframes edge-rest-right {
+  0% { transform: translate(0, 0) scaleY(1) rotate(0); }
+  70% { transform: translate(38.08px, 12.96px) scaleY(.9118) rotate(2deg); }
+  100% { transform: translate(34px, 12px) scaleY(.94) rotate(2deg); }
+}
+
+@keyframes edge-rest-bottom {
+  0% { transform: translateY(0) scaleY(1); }
+  70% { transform: translateY(41.04px) scaleY(.7954); }
+  100% { transform: translateY(38px) scaleY(.82); }
+}
+
+@keyframes edge-direction-in {
+  0% { opacity: 0; stroke-dasharray: 0 1; stroke-dashoffset: 0; }
+  38% { opacity: .78; stroke-dasharray: .82 .18; }
+  62% { opacity: .58; stroke-dasharray: 1 0; stroke-dashoffset: 0; }
+  100% { opacity: 0; stroke-dasharray: 0 1; stroke-dashoffset: -1; }
+}
+
+@keyframes edge-direction-out {
+  0% { opacity: 0; stroke-dasharray: 0 1; stroke-dashoffset: 0; }
+  34% { opacity: .66; stroke-dasharray: .82 .18; }
+  64% { opacity: .58; stroke-dasharray: .46 .54; stroke-dashoffset: -.54; }
+  100% { opacity: 0; stroke-dasharray: 0 1; stroke-dashoffset: -1; }
+}
+
+@keyframes edge-ambient-scan {
+  0% { opacity: 0; stroke-dashoffset: 1; }
+  7% { opacity: .52; }
+  16% { stroke-dashoffset: .24; }
+  25% { opacity: .42; stroke-dashoffset: 0; }
+  38% { opacity: 0; stroke-dashoffset: -1; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+
+@keyframes edge-ambient-marker {
+  0% { opacity: 0; offset-distance: 0%; }
+  6% { opacity: .78; }
+  29% { opacity: .72; }
+  34% { opacity: 0; offset-distance: 100%; }
+  100% { opacity: 0; offset-distance: 100%; }
 }
 
 @keyframes objection-entrance {
