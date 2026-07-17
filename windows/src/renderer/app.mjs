@@ -9,25 +9,25 @@ import {
 } from "../shared/game-models.mjs";
 
 const ACTIONS = Object.freeze({
-  idle: action("idle", "", 0),
-  think: action("think", "唏……真相只有一个。", 2_400, "pop", "action.think"),
-  objection: action("objection", "异议！", 2_000, "shake", "action.objection"),
-  slam: action("slam", "等一下！", 1_800, "impact", "action.slam"),
-  sweat: action("sweat", "糟了……", 2_100, "shake", "action.sweat"),
-  evidence: action("evidence", "证据就在这里。", 2_500, "pop", "action.evidence"),
-  "badge-toss": action("badge-toss", "这是我的律师徽章！", 2_200, "pop", "easter.badge"),
-  magatama: action("magatama", "你的心里……有锁。", 2_800, "pop", "easter.magatama"),
-  stepladder: action("stepladder", "这明明是人字梯！", 2_800, "pop", "easter.stepladder"),
-  thinker: action("thinker", "把“思考者”加入证物。", 2_600, "pop", "easter.thinker"),
-  "decisive-evidence": action("decisive-evidence", "找到决定性的证据了！", 2_400, "pop", "easter.decisive"),
-  flashlight: action("flashlight", "先把手电打开。", 3_200, "pop"),
-  sleepy: action("sleepy", "就休息五分钟……", 3_000, "sleepy"),
-  dropped: action("dropped", "下次先打声招呼！", 1_500, "impact"),
-  thrown: action("thrown", "哇啊——！", 0, "thrown", "physics.thrown"),
-  impact: action("impact", "痛！", 0, "impact"),
-  dizzy: action("dizzy", "天地都在转……", 2_200, "shake"),
-  "held-struggle": action("held-struggle", "放、放我下来！", 0, "shake"),
-  "leg-struggle": action("leg-struggle", "为什么偏偏拽脚啊！", 0, "shake"),
+  idle: action("idle", "", 0, "action-idle"),
+  think: action("think", "唏……真相只有一个。", 2_400, "action-think", "action.think"),
+  objection: action("objection", "异议！", 2_000, "action-objection", "action.objection"),
+  slam: action("slam", "等一下！", 1_800, "action-slam", "action.slam"),
+  sweat: action("sweat", "糟了……", 2_100, "action-sweat", "action.sweat"),
+  evidence: action("evidence", "证据就在这里。", 2_500, "action-evidence", "action.evidence"),
+  "badge-toss": action("badge-toss", "这是我的律师徽章！", 2_200, "action-badge", "easter.badge"),
+  magatama: action("magatama", "你的心里……有锁。", 2_800, "action-magatama", "easter.magatama"),
+  stepladder: action("stepladder", "这明明是人字梯！", 2_800, "action-stepladder", "easter.stepladder"),
+  thinker: action("thinker", "把“思考者”加入证物。", 2_600, "action-thinker", "easter.thinker"),
+  "decisive-evidence": action("decisive-evidence", "找到决定性的证据了！", 2_400, "action-decisive", "easter.decisive"),
+  flashlight: action("flashlight", "先把手电打开。", 3_200, "action-flashlight"),
+  sleepy: action("sleepy", "就休息五分钟……", 3_000, "action-sleepy"),
+  dropped: action("dropped", "下次先打声招呼！", 1_500, "action-dropped"),
+  thrown: action("thrown", "哇啊——！", 0, "action-thrown", "physics.thrown"),
+  impact: action("impact", "痛！", 0, "action-impact"),
+  dizzy: action("dizzy", "天地都在转……", 2_200, "action-dizzy"),
+  "held-struggle": action("held-struggle", "放、放我下来！", 0, "action-held"),
+  "leg-struggle": action("leg-struggle", "为什么偏偏拽脚啊！", 0, "action-leg"),
 });
 
 const INTERACTIVE_ACTIONS = [
@@ -261,7 +261,7 @@ function handleMenuCommand({ command, value }) {
         showTemporaryMessage(
           value === "focused" ? "已切换为专注：不再自动演出。"
             : value === "lively" ? "已切换为活跃陪伴。" : "已切换为轻陪伴。",
-          2_400,
+          2_600,
         );
       }
       break;
@@ -324,7 +324,7 @@ function showIdle() {
   if (crossToken) return;
   currentAction = "idle";
   dom.image.src = assetURLs.get("idle-cg.png") ?? "";
-  dom.image.className = "";
+  dom.image.className = ACTIONS.idle.animation;
   hideObjectionBurst();
   hideDialogue();
   presentDeferredFeedback();
