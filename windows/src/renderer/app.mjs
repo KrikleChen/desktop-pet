@@ -104,6 +104,11 @@ const dom = {
   dialogueText: document.querySelector("#dialogue-text"),
   toast: document.querySelector("#unlock-toast"),
   objection: document.querySelector("#objection-burst"),
+  followUpHotspot: document.querySelector("#follow-up-hotspot"),
+  followUpChoices: document.querySelector("#follow-up-choices"),
+  followUpCase: document.querySelector("#follow-up-case"),
+  followUpBadge: document.querySelector("#follow-up-badge"),
+  followUpClose: document.querySelector("#follow-up-close"),
   ordered: document.querySelector("#ordered-hud"),
   cross: document.querySelector("#cross-controls"),
   previous: document.querySelector("#cross-previous"),
@@ -136,6 +141,10 @@ let objectionFinishTimer;
 let dialogueExitTimer;
 let dialogueTypeTimer;
 let courtRecordOpen = false;
+let isMouseInside = false;
+let followUpState;
+let followUpTimer;
+let followUpSequenceTimers = [];
 let currentGrabMask;
 let activeAsset = "idle";
 let dragResignTimer;
@@ -172,10 +181,22 @@ async function preloadAssets() {
 
 function wireInteractions() {
   dom.stage.addEventListener("mousedown", beginPointerInteraction);
+  dom.root.addEventListener("mouseenter", () => {
+    isMouseInside = true;
+    updateFollowUpHotspot();
+  });
+  dom.root.addEventListener("mouseleave", () => {
+    isMouseInside = false;
+    updateFollowUpHotspot();
+  });
   document.addEventListener("mousemove", continuePointerInteraction);
   document.addEventListener("mouseup", endPointerInteraction);
   document.addEventListener("contextmenu", showContextMenu);
 
+  dom.followUpHotspot.addEventListener("click", activateFollowUp);
+  dom.followUpCase.addEventListener("click", () => playFollowUp("case"));
+  dom.followUpBadge.addEventListener("click", () => playFollowUp("badge"));
+  dom.followUpClose.addEventListener("click", () => cancelFollowUp(true));
   dom.previous.addEventListener("click", () => navigateCross(-1));
   dom.next.addEventListener("click", () => navigateCross(1));
   dom.object.addEventListener("click", objectDuringCross);
@@ -203,6 +224,7 @@ function beginPointerInteraction(event) {
     dom.stage.getBoundingClientRect(),
   );
   if (!region) return;
+  cancelFollowUp(false);
   cancelCross(false);
   markInteraction();
   pointerState = {
@@ -314,6 +336,7 @@ function beginBeingHeld(region) {
 
 function showContextMenu(event) {
   event.preventDefault();
+  cancelFollowUp(true);
   cancelCross(true);
   closeCourtRecord(false);
   markInteraction();
@@ -414,6 +437,7 @@ function showIdle() {
   dom.image.className = ACTIONS.idle.animation;
   hideObjectionBurst();
   hideDialogue();
+  updateFollowUpHotspot();
   presentDeferredFeedback();
   scheduleIdle();
 }
@@ -534,6 +558,7 @@ function dialogueExitDuration(element) {
 
 function startCrossExamination() {
   markInteraction();
+  cancelFollowUp(false);
   window.desktopPet.cancelAccessories();
   cancelCross(false);
   closeCourtRecord(false);
@@ -623,9 +648,90 @@ function cancelCross(restore) {
   if (restore && hadRound) showIdle();
 }
 
+function beginPendingFollowUp() {
+  clearFollowUpTimers();
+  followUpState = "pending";
+  dom.followUpChoices.classList.add("hidden");
+  updateFollowUpHotspot();
+  followUpTimer = setTimeout(() => cancelFollowUp(true), 10_000);
+}
+
+function activateFollowUp() {
+  if (followUpState !== "pending") return;
+  clearFollowUpTimers();
+  markInteraction();
+  followUpState = "choosing";
+  updateFollowUpHotspot();
+  dom.followUpChoices.classList.remove("hidden");
+  performAction("think", {
+    message: "刚才的线索……想追问哪一边？",
+    autoReset: false,
+    record: false,
+  });
+  followUpTimer = setTimeout(() => cancelFollowUp(true), 12_000);
+}
+
+function playFollowUp(branch) {
+  if (followUpState !== "choosing") return;
+  clearFollowUpTimers();
+  markInteraction();
+  dom.followUpChoices.classList.add("hidden");
+
+  if (branch === "case") {
+    followUpState = undefined;
+    startCrossExamination();
+    return;
+  }
+
+  followUpState = "badge";
+  performAction("badge-toss", {
+    message: "这是我的律师徽章。货真价实！",
+    autoReset: false,
+    record: false,
+  });
+  scheduleFollowUpStep(5_200, () => performAction("think", {
+    message: "不过，徽章本身可不能代替证据。",
+    autoReset: false,
+    record: false,
+  }));
+  scheduleFollowUpStep(11_400, () => cancelFollowUp(true));
+}
+
+function scheduleFollowUpStep(delay, operation) {
+  const timer = setTimeout(() => {
+    followUpSequenceTimers = followUpSequenceTimers.filter((candidate) => candidate !== timer);
+    operation();
+  }, delay);
+  followUpSequenceTimers.push(timer);
+}
+
+function clearFollowUpTimers() {
+  clearTimeout(followUpTimer);
+  followUpTimer = undefined;
+  followUpSequenceTimers.forEach(clearTimeout);
+  followUpSequenceTimers = [];
+}
+
+function cancelFollowUp(restore) {
+  const hadFollowUp = Boolean(followUpState);
+  clearFollowUpTimers();
+  followUpState = undefined;
+  dom.followUpHotspot.classList.add("hidden");
+  dom.followUpChoices.classList.add("hidden");
+  if (restore && hadFollowUp) showIdle();
+}
+
+function updateFollowUpHotspot() {
+  dom.followUpHotspot.classList.toggle(
+    "hidden",
+    followUpState !== "pending" || !isMouseInside,
+  );
+}
+
 function handleAccessoryEvent(event) {
   switch (event.type) {
     case "started": {
+      cancelFollowUp(false);
       cancelCross(false);
       closeCourtRecord(false);
       activeAccessorySession = event.sessionId;
@@ -812,7 +918,7 @@ function cancelThrowRecovery(endFlight = true) {
 }
 
 function presentDeferredFeedback() {
-  if (currentAction !== "idle" || crossToken || courtRecordOpen) return;
+  if (currentAction !== "idle" || crossToken || courtRecordOpen || followUpState) return;
   if (pendingAccessoryReward) {
     const reward = pendingAccessoryReward;
     pendingAccessoryReward = undefined;
@@ -846,7 +952,7 @@ function recordCourtEntry(id) {
 }
 
 function showNextToast() {
-  if (currentAction !== "idle" || crossToken || courtRecordOpen || pendingAccessoryReward) return;
+  if (currentAction !== "idle" || crossToken || courtRecordOpen || followUpState || pendingAccessoryReward) return;
   if (!currentToast) currentToast = toastQueue.shift();
   if (!currentToast) return;
   dom.toast.textContent = `★ 新记录：${currentToast}`;
@@ -867,6 +973,7 @@ function suspendToast() {
 
 function showCourtRecord() {
   markInteraction();
+  cancelFollowUp(false);
   cancelCross(false);
   window.desktopPet.cancelAccessories();
   suspendToast();
@@ -912,9 +1019,14 @@ function scheduleIdle({ reset = false, useInitial = false } = {}) {
     const trulyIdle = currentAction === "idle"
       && !crossToken
       && !courtRecordOpen
+      && !followUpState
       && activeAccessorySession === undefined;
     if (trulyIdle && Math.random() <= profile.probability) {
-      performAction(ambientBag.next(AMBIENT_ACTIONS), { record: true });
+      const ambientAction = ambientBag.next(AMBIENT_ACTIONS);
+      performAction(ambientAction, { record: true });
+      if (["think", "evidence", "badge-toss"].includes(ambientAction)) {
+        beginPendingFollowUp();
+      }
     } else {
       scheduleIdle();
     }

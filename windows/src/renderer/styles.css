@@ -335,6 +335,75 @@ button { font: inherit; }
     1px 1px 0 rgb(97 1 1);
 }
 
+.follow-up-hotspot {
+  position: absolute;
+  z-index: 24;
+  top: 90px;
+  left: 151px;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1.25px solid rgb(255 59 48 / 58%);
+  border-radius: 50%;
+  color: #20242a;
+  background: rgb(255 255 255 / 88%);
+  box-shadow: 0 2px 0 rgb(0 0 0 / 16%);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 22px;
+  cursor: pointer;
+  animation: follow-up-in 140ms ease-out;
+}
+
+.follow-up-hotspot:hover {
+  border-color: rgb(255 59 48 / 82%);
+  background: rgb(255 255 255 / 98%);
+}
+
+.follow-up-hotspot:active { color: white; background: rgb(255 59 48 / 92%); }
+
+.follow-up-choices {
+  position: absolute;
+  z-index: 26;
+  bottom: 3px;
+  left: 8px;
+  display: grid;
+  width: 224px;
+  height: 35px;
+  grid-template-columns: 1fr 1fr 21px;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid rgb(118 118 128 / 75%);
+  border-radius: 8px;
+  background: rgb(246 246 246 / 92%);
+}
+
+.follow-up-choices button {
+  min-width: 0;
+  height: 25px;
+  padding: 0 4px;
+  border: 1px solid rgb(118 118 128 / 78%);
+  border-radius: 5px;
+  color: #20242a;
+  background: rgb(255 255 255 / 92%);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.follow-up-choices button:hover { background: rgb(0 122 255 / 13%); }
+.follow-up-choices button:active { background: rgb(0 122 255 / 24%); }
+.follow-up-choices .close {
+  padding: 0;
+  border-color: rgb(118 118 128 / 30%);
+  border-radius: 50%;
+  color: #6a6b70;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.follow-up-choices .close:hover { border-color: rgb(255 59 48 / 62%); background: rgb(255 59 48 / 16%); }
+
 .ordered-hud,
 .cross-controls {
   position: absolute;
@@ -675,6 +744,11 @@ button { font: inherit; }
 @keyframes dialogue-impact-in {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes follow-up-in {
+  from { opacity: 0; transform: scale(.88); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 @keyframes objection-entrance {
