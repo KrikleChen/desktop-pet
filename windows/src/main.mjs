@@ -1,7 +1,12 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { ACCESSORY_MOTIONS, accessoryMotionPosition } from "./shared/accessory-motion.mjs";
+import {
+  ACCESSORY_MOTIONS,
+  accessoryMotionPosition,
+  accessoryPathPosition,
+  easedProgress,
+} from "./shared/accessory-motion.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = path.join(moduleDirectory, "renderer");
@@ -354,6 +359,7 @@ function scatterAccessories() {
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.once("ready-to-show", () => window.showInactive());
     window.on("closed", () => {
+      destroyAccessoryTrail(entry);
       if (accessoryWindows.delete(webContentsId) && accessoryWindows.size === 0) {
         finishAccessorySession("faded", true);
       }
@@ -395,6 +401,7 @@ function reclaimAccessory(webContentsId, entry) {
     x: clamp(petBounds.x + petBounds.width / 2 + 28, area.x + startBounds.width / 2, area.x + area.width - startBounds.width / 2),
     y: clamp(petBounds.y + petBounds.height - 108, area.y + startBounds.height / 2, area.y + area.height - startBounds.height / 2),
   };
+  entry.trailWindow = createAccessoryTrailWindow(entry, area);
   const startedAt = performance.now();
   entry.reclaimTimer = setInterval(() => {
     if (entry.window.isDestroyed() || entry.sessionId !== activeAccessorySession) {
@@ -407,11 +414,13 @@ function reclaimAccessory(webContentsId, entry) {
     const x = clamp(Math.round(point.x - startBounds.width / 2), area.x, area.x + area.width - startBounds.width);
     const y = clamp(Math.round(point.y - startBounds.height / 2), area.y, area.y + area.height - startBounds.height);
     entry.window.setPosition(x, y, false);
+    updateAccessoryTrail(entry, area, start, destination, progress);
     if (progress < 1) return;
 
     clearInterval(entry.reclaimTimer);
     entry.reclaimTimer = undefined;
     accessoryWindows.delete(webContentsId);
+    destroyAccessoryTrail(entry);
     entry.window.destroy();
     if (accessoryWindows.size === 0) finishAccessorySession("completed", true);
   }, 16);
@@ -429,11 +438,88 @@ function finishAccessorySession(reason, notify) {
   reclaimedAccessories = new Set();
   for (const entry of entries) {
     if (entry.reclaimTimer) clearInterval(entry.reclaimTimer);
+    destroyAccessoryTrail(entry);
     if (!entry.window.isDestroyed()) entry.window.destroy();
   }
   if (notify && sessionId !== undefined) {
     sendToPet("accessory-event", { type: "finished", sessionId, reason, reclaimed });
   }
+}
+
+function createAccessoryTrailWindow(entry, area) {
+  const window = new BrowserWindow({
+    width: area.width,
+    height: area.height,
+    x: area.x,
+    y: area.y,
+    useContentSize: true,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    focusable: false,
+    hasShadow: false,
+    backgroundColor: "#00000000",
+    show: false,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: false,
+    },
+  });
+  window.setAlwaysOnTop(true, "floating");
+  window.setIgnoreMouseEvents(true);
+  window.setMenuBarVisibility(false);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.on("did-finish-load", () => {
+    if (entry.trailPayload && !window.isDestroyed()) {
+      window.webContents.send("accessory-trail-update", entry.trailPayload);
+    }
+  });
+  window.once("ready-to-show", () => window.showInactive());
+  window.on("closed", () => {
+    if (entry.trailWindow === window) entry.trailWindow = undefined;
+  });
+  window.loadFile(path.join(rendererDirectory, "accessory-trail.html"), {
+    query: { kind: entry.kind },
+  });
+  return window;
+}
+
+function updateAccessoryTrail(entry, area, start, destination, animationProgress) {
+  const motion = ACCESSORY_MOTIONS[entry.kind];
+  if (!motion) return;
+  const headProgress = easedProgress(animationProgress);
+  const startProgress = Math.max(0, headProgress - motion.trailFraction);
+  const segmentCount = Math.max(3, Math.ceil((headProgress - startProgress) * 96));
+  const points = [];
+  for (let index = 0; index <= segmentCount; index += 1) {
+    const fraction = index / segmentCount;
+    const progress = startProgress + (headProgress - startProgress) * fraction;
+    const point = accessoryPathPosition(entry.kind, start, destination, progress);
+    points.push({
+      x: point.x - area.x,
+      y: point.y - area.y,
+      progress,
+    });
+  }
+  entry.trailPayload = { kind: entry.kind, points, animationProgress };
+  if (entry.trailWindow && !entry.trailWindow.isDestroyed()) {
+    entry.trailWindow.webContents.send("accessory-trail-update", entry.trailPayload);
+  }
+}
+
+function destroyAccessoryTrail(entry) {
+  entry.trailPayload = undefined;
+  if (entry.trailWindow && !entry.trailWindow.isDestroyed()) entry.trailWindow.destroy();
+  entry.trailWindow = undefined;
 }
 
 function startThrow(initialVelocity) {

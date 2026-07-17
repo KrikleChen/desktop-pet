@@ -1,0 +1,64 @@
+html,
+body,
+svg {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+svg { display: block; pointer-events: none; }
+path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body[data-kind="attorney-badge"] #trail-back {
+  stroke: rgb(255 184 41 / 24%);
+  stroke-width: 6.5;
+  filter: drop-shadow(0 0 5px rgb(255 184 41 / 70%));
+}
+body[data-kind="attorney-badge"] #trail-front { stroke: rgb(255 230 122 / 88%); stroke-width: 2.1; }
+
+body[data-kind="case-file"] path { stroke-dasharray: 9 7; }
+body[data-kind="case-file"] #trail-back { stroke: rgb(199 224 240 / 52%); stroke-width: 3.2; }
+body[data-kind="case-file"] #trail-front { stroke: rgb(255 255 255 / 78%); stroke-width: 1; }
+
+body[data-kind="magatama"] #trail-back {
+  stroke: rgb(56 240 230 / 20%);
+  stroke-width: 8;
+  filter: drop-shadow(0 0 9px rgb(56 240 230 / 90%));
+}
+body[data-kind="magatama"] #trail-front {
+  stroke: rgb(168 255 245 / 90%);
+  stroke-width: 2.3;
+  filter: drop-shadow(0 0 3px rgb(168 255 245 / 90%));
+}
+
+body[data-kind="evidence"] #trail-back {
+  stroke: rgb(245 56 61 / 84%);
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 2px rgb(245 56 61 / 84%));
+}
+body[data-kind="evidence"] #trail-front {
+  stroke: rgb(51 133 255 / 84%);
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 2px rgb(51 133 255 / 84%));
+}
+
+body[data-kind="pen"] #trail-back { display: none; }
+body[data-kind="pen"] #trail-front { stroke: rgb(117 184 245 / 86%); stroke-width: 1.15; }
+
+body[data-kind="sticky-note"] path { stroke-linecap: square; }
+body[data-kind="sticky-note"] #trail-back {
+  stroke: rgb(255 214 77 / 72%);
+  stroke-width: 4.2;
+  stroke-dasharray: 2 8;
+}
+body[data-kind="sticky-note"] #trail-front {
+  stroke: rgb(255 148 51 / 66%);
+  stroke-width: 1.1;
+  stroke-dasharray: 7 11;
+}
