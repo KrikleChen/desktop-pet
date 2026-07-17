@@ -71,6 +71,9 @@ button { font: inherit; }
 #pet-image.action-thrown { animation: action-thrown 280ms ease-out; }
 #pet-image.action-impact { animation: action-impact 320ms ease-out; }
 #pet-image.action-dizzy { animation: action-dizzy 720ms ease-in-out 3 alternate; }
+#pet-image.action-dusting { animation: action-dusting 550ms ease-in-out 2; }
+#pet-image.action-irritated { animation: action-irritated 460ms ease-out; }
+#pet-image.action-light-recovery { animation: action-light-recovery 650ms ease-in-out; }
 
 .dialogue {
   --dialogue-accent: rgb(43 87 148);
@@ -593,6 +596,27 @@ button { font: inherit; }
 @keyframes action-dizzy {
   from { transform: rotate(-3.15deg); }
   to { transform: rotate(3.15deg); }
+}
+
+@keyframes action-dusting {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes action-irritated {
+  0% { transform: translateY(0) scale(.97); }
+  50% { transform: translateY(-5px) scale(1.06); }
+  75% { transform: translateY(2px) scale(1.02); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes action-light-recovery {
+  0%, 100% { transform: translateY(0); }
+  34% { transform: translateY(2px); }
+  67% { transform: translateY(-1px); }
 }
 
 @keyframes dialogue-friendly-in {

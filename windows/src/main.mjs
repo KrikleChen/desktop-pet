@@ -137,7 +137,6 @@ function registerIPC() {
     if (!isPetSender(event) || !petWindow) return;
     dragState = undefined;
     if (!validPoint(velocity) || Math.hypot(velocity.x, velocity.y) < 720) {
-      sendToPet("motion-event", { type: "settled", severity: "light" });
       return;
     }
     startThrow(velocity);
@@ -415,24 +414,25 @@ function startThrow(initialVelocity) {
     if (x < area.x || x + bounds.width > area.x + area.width) {
       x = Math.max(area.x, Math.min(x, area.x + area.width - bounds.width));
       impactSpeed = Math.max(impactSpeed, Math.abs(velocityX));
-      velocityX *= -0.38;
+      velocityX *= -0.20;
+      velocityY *= 0.68;
     }
     if (y < area.y || y + bounds.height > area.y + area.height) {
       y = Math.max(area.y, Math.min(y, area.y + area.height - bounds.height));
       impactSpeed = Math.max(impactSpeed, Math.abs(velocityY));
-      velocityY *= -0.26;
-      velocityX *= 0.72;
+      velocityY *= -0.20;
+      velocityX *= 0.68;
     }
 
     petWindow.setPosition(Math.round(x), Math.round(y), false);
     if (impactSpeed > 0) {
-      const severity = impactSpeed > 1_250 ? "heavy" : impactSpeed > 650 ? "medium" : "light";
+      const severity = impactSpeed >= 1_100 ? "heavy" : impactSpeed >= 420 ? "medium" : "light";
       if (severity === "heavy" || (severity === "medium" && strongest === "light")) strongest = severity;
       sendToPet("motion-event", { type: "bounce", severity });
     }
 
     const onFloor = Math.abs(y + bounds.height - (area.y + area.height)) < 2;
-    if ((onFloor && Math.hypot(velocityX, velocityY) < 190) || elapsed > 4.5) {
+    if ((onFloor && Math.hypot(velocityX, velocityY) < 175) || elapsed > 4.5) {
       stopThrow();
       sendToPet("motion-event", { type: "settled", severity: strongest });
     }

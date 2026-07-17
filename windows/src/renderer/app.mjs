@@ -28,6 +28,9 @@ const ACTIONS = Object.freeze({
   thrown: action("thrown", "哇啊——！", 0, "action-thrown", "physics.thrown"),
   impact: action("impact", "痛！", 0, "action-impact"),
   dizzy: action("dizzy", "天地都在转……", 2_200, "action-dizzy"),
+  dusting: action("dusting", "我的西装……", 1_400, "action-dusting"),
+  irritated: action("irritated", "下次绝对不许这样！", 2_000, "action-irritated"),
+  "light-recovery": action("dizzy", "", 0, "action-light-recovery"),
   "held-struggle": action("held-struggle", "放、放我下来！", 0, "action-held"),
   "held-resigned": action("held-resigned", "……算了，随你吧。", 0, "action-resigned"),
   "hair-struggle": action("hair-struggle", "头发！别拽头发！", 0, "action-hair"),
@@ -136,6 +139,9 @@ let courtRecordOpen = false;
 let currentGrabMask;
 let activeAsset = "idle";
 let dragResignTimer;
+let throwInFlight = false;
+let lastBounceAt = 0;
+let throwRecoveryTimers = [];
 let pointerState;
 let suppressClickUntil = 0;
 let activeAccessorySession;
@@ -487,7 +493,7 @@ function hideDialogue() {
 
 function dialogueStyle(actionName) {
   if (actionName === "think") return "thought";
-  if (["sweat", "dizzy"].includes(actionName)) return "nervous";
+  if (["sweat", "dizzy", "light-recovery"].includes(actionName)) return "nervous";
   if (["slam", "decisive-evidence"].includes(actionName)) return "courtroom";
   if (actionName === "badge-toss") return "badge";
   if (actionName === "magatama") return "spiritual";
@@ -706,25 +712,103 @@ function renderOrderedHUD(snapshot) {
 
 function handleMotionEvent(event) {
   switch (event.type) {
-    case "throw-start":
-      performAction("thrown", { autoReset: false });
+    case "throw-start": {
+      cancelThrowRecovery();
+      throwInFlight = true;
+      lastBounceAt = 0;
+      const teasingStage = teasingMemory.stage(performance.now());
+      const message = teasingStage === "irritated" ? "又扔？！我正式抗议！"
+        : teasingStage === "resigned" ? "……我就知道最后会被扔出去。"
+          : "哇啊——！";
+      performAction("thrown", { message, autoReset: false, record: false });
       break;
-    case "bounce":
-      performAction("impact", {
-        message: event.severity === "heavy" ? "痛——！" : event.severity === "medium" ? "痛！" : "唔！",
+    }
+    case "bounce": {
+      const now = performance.now();
+      if (now - lastBounceAt < 280) return;
+      lastBounceAt = now;
+      cancelThrowRecovery(false);
+      const impactAction = event.severity === "light" ? "dropped" : "impact";
+      const impactMessage = event.severity === "heavy" ? "痛——！"
+        : event.severity === "medium" ? "痛！" : "唔！";
+      const afterMessage = event.severity === "heavy" ? "这已经不是搬家了吧？！"
+        : event.severity === "medium" ? "好痛……！" : "只是轻轻碰了一下……";
+      performAction(impactAction, {
+        message: impactMessage,
         autoReset: false,
         record: false,
       });
-      break;
-    case "settled":
-      performAction(event.severity === "light" ? "dropped" : "dizzy", {
-        message: event.severity === "heavy" ? "天地都在转……这下真的很重！" : undefined,
-        record: false,
+      scheduleThrowRecovery(650, () => {
+        if (!throwInFlight) return;
+        performAction("thrown", { message: afterMessage, autoReset: false, record: false });
       });
+      break;
+    }
+    case "settled":
+      throwInFlight = false;
+      beginThrowLandingRecovery(event.severity);
       break;
     default:
       break;
   }
+}
+
+function beginThrowLandingRecovery(severity) {
+  cancelThrowRecovery();
+  if (severity === "light") {
+    performAction("light-recovery", {
+      message: "嘶……只是撞到头了。",
+      autoReset: false,
+      record: false,
+    });
+    scheduleThrowRecovery(1_800, showIdle);
+    return;
+  }
+
+  if (severity === "medium") {
+    performAction("dizzy", {
+      message: "有点晕……先让我缓一下。",
+      autoReset: false,
+      record: false,
+    });
+    scheduleThrowRecovery(2_000, () => performAction("dusting", {
+      message: "西装也沾上灰了……",
+      autoReset: false,
+      record: false,
+    }));
+    scheduleThrowRecovery(3_600, showIdle);
+    return;
+  }
+
+  performAction("dizzy", {
+    message: "天地都在转……这下真的很重！",
+    autoReset: false,
+    record: false,
+  });
+  scheduleThrowRecovery(2_200, () => performAction("dusting", {
+    autoReset: false,
+    record: false,
+  }));
+  scheduleThrowRecovery(3_700, () => performAction("irritated", {
+    message: "下次绝对不许这样扔！",
+    autoReset: false,
+    record: false,
+  }));
+  scheduleThrowRecovery(5_700, showIdle);
+}
+
+function scheduleThrowRecovery(delay, operation) {
+  const timer = setTimeout(() => {
+    throwRecoveryTimers = throwRecoveryTimers.filter((candidate) => candidate !== timer);
+    operation();
+  }, delay);
+  throwRecoveryTimers.push(timer);
+}
+
+function cancelThrowRecovery(endFlight = true) {
+  throwRecoveryTimers.forEach(clearTimeout);
+  throwRecoveryTimers = [];
+  if (endFlight) throwInFlight = false;
 }
 
 function presentDeferredFeedback() {
@@ -808,6 +892,7 @@ function presentCourtRecordWindow() {
 }
 
 function markInteraction() {
+  cancelThrowRecovery();
   suspendToast();
   clearTimeout(idleTimer);
   idleTimer = undefined;
