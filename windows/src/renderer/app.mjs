@@ -75,6 +75,8 @@ const dom = {
   stage: document.querySelector("#pet-stage"),
   image: document.querySelector("#pet-image"),
   dialogue: document.querySelector("#dialogue"),
+  dialogueMarker: document.querySelector("#dialogue-marker"),
+  dialogueText: document.querySelector("#dialogue-text"),
   toast: document.querySelector("#unlock-toast"),
   objection: document.querySelector("#objection-burst"),
   ordered: document.querySelector("#ordered-hud"),
@@ -107,6 +109,8 @@ let quietTimer;
 let clickTimer;
 let objectionHideTimer;
 let objectionFinishTimer;
+let dialogueExitTimer;
+let dialogueTypeTimer;
 let pointerState;
 let suppressClickUntil = 0;
 let activeAccessorySession;
@@ -304,7 +308,7 @@ function performAction(name, options = {}) {
     hideDialogue();
   } else if (message) {
     hideObjectionBurst();
-    showDialogue(message, name === "decisive-evidence" ? "courtroom" : "");
+    showDialogue(message, dialogueStyle(name));
   } else {
     hideObjectionBurst();
     hideDialogue();
@@ -359,14 +363,85 @@ function showTemporaryMessage(message, duration) {
   actionTimer = setTimeout(showIdle, duration);
 }
 
-function showDialogue(message, style = "") {
-  dom.dialogue.textContent = message;
-  dom.dialogue.className = `dialogue${style ? ` ${style}` : ""}`;
+function showDialogue(message, style = "friendly") {
+  clearTimeout(dialogueExitTimer);
+  clearInterval(dialogueTypeTimer);
+  dialogueExitTimer = undefined;
+  dialogueTypeTimer = undefined;
+  dom.dialogue.className = "dialogue hidden";
+  dom.dialogueMarker.textContent = dialogueMarker(style);
+  dom.dialogueText.textContent = style === "thought" ? "" : message;
+  void dom.dialogue.offsetWidth;
+  dom.dialogue.className = `dialogue ${style} entering`;
+
+  if (style === "thought" && message) {
+    const characters = [...message];
+    let index = 0;
+    dialogueTypeTimer = setInterval(() => {
+      index += 1;
+      dom.dialogueText.textContent = characters.slice(0, index).join("");
+      if (index >= characters.length) {
+        clearInterval(dialogueTypeTimer);
+        dialogueTypeTimer = undefined;
+      }
+    }, 55);
+  }
 }
 
 function hideDialogue() {
-  dom.dialogue.className = "dialogue hidden";
-  dom.dialogue.textContent = "";
+  clearInterval(dialogueTypeTimer);
+  dialogueTypeTimer = undefined;
+  if (dom.dialogue.classList.contains("hidden")
+      || dom.dialogue.classList.contains("exiting")) return;
+  const duration = dialogueExitDuration(dom.dialogue);
+  dom.dialogue.classList.remove("entering");
+  dom.dialogue.classList.add("exiting");
+  dialogueExitTimer = setTimeout(() => {
+    dom.dialogue.className = "dialogue hidden";
+    dom.dialogueText.textContent = "";
+    dom.dialogueMarker.textContent = "";
+    dialogueExitTimer = undefined;
+  }, duration);
+}
+
+function dialogueStyle(actionName) {
+  if (actionName === "think") return "thought";
+  if (["sweat", "dizzy"].includes(actionName)) return "nervous";
+  if (["slam", "decisive-evidence"].includes(actionName)) return "courtroom";
+  if (actionName === "badge-toss") return "badge";
+  if (actionName === "magatama") return "spiritual";
+  if (actionName === "flashlight") return "flashlight";
+  if (["held-struggle", "leg-struggle", "thrown"].includes(actionName)) return "drag-protest";
+  if (["dropped", "impact"].includes(actionName)) return "impact";
+  return "friendly";
+}
+
+function dialogueMarker(style) {
+  switch (style) {
+    case "thought":
+    case "resigned": return "…";
+    case "nervous":
+    case "courtroom":
+    case "drag-protest":
+    case "impact": return "!";
+    case "badge": return "律";
+    case "spiritual": return "勾";
+    case "flashlight": return "✦";
+    default: return "●";
+  }
+}
+
+function dialogueExitDuration(element) {
+  if (element.classList.contains("thought")) return 340;
+  if (element.classList.contains("nervous")) return 280;
+  if (element.classList.contains("courtroom")) return 250;
+  if (element.classList.contains("badge")) return 320;
+  if (element.classList.contains("spiritual")) return 480;
+  if (element.classList.contains("flashlight")) return 220;
+  if (element.classList.contains("drag-protest")) return 300;
+  if (element.classList.contains("resigned")) return 620;
+  if (element.classList.contains("impact")) return 140;
+  return 240;
 }
 
 function startCrossExamination() {

@@ -53,29 +53,138 @@ button { font: inherit; }
 #pet-image.sleepy { animation: breathe 1.8s ease-in-out infinite; }
 
 .dialogue {
+  --dialogue-accent: rgb(43 87 148);
+  --dialogue-marker-color: white;
+  --dialogue-exit-duration: 240ms;
   position: absolute;
   z-index: 20;
-  top: 4px;
-  left: 8px;
-  width: 244px;
-  min-height: 48px;
-  max-height: 62px;
-  padding: 8px 12px;
-  overflow: hidden;
-  border: 1px solid rgb(60 67 76 / 48%);
-  border-radius: 12px;
-  color: #1f252c;
-  background: rgb(255 255 255 / 94%);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 16%);
+  top: 7px;
+  left: 50%;
+  display: flex;
+  width: fit-content;
+  min-width: 176px;
+  max-width: 226px;
+  min-height: 45px;
+  max-height: 57px;
+  align-items: center;
+  padding: 7px 10px 7px 14px;
+  border: 2px solid rgb(20 41 77 / 92%);
+  border-radius: 11px;
+  color: rgb(18 36 64 / 98%);
+  background: rgb(250 245 219 / 97%);
+  box-shadow: 2px 2px 0 rgb(0 0 0 / 24%);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.42;
   text-align: center;
+  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+}
+
+.dialogue::before {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 4px;
+  width: 5px;
+  border-radius: 3px;
+  background: var(--dialogue-accent);
+  content: "";
+}
+
+.dialogue::after {
+  position: absolute;
+  bottom: -8px;
+  left: calc(50% - 6px);
+  width: 12px;
+  height: 9px;
+  background: rgb(250 245 219 / 97%);
+  clip-path: polygon(0 0, 50% 100%, 100% 0);
+  content: "";
+}
+
+.dialogue.entering { animation: dialogue-friendly-in 260ms ease-out; }
+.dialogue.exiting { animation: dialogue-friendly-out var(--dialogue-exit-duration) ease-in forwards; }
+
+.dialogue-marker {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  margin-right: 5px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--dialogue-marker-color);
+  background: var(--dialogue-accent);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.dialogue-text {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 164px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.dialogue.thought {
+  --dialogue-exit-duration: 340ms;
+}
+
+.dialogue.thought.entering { animation: dialogue-thought-in 340ms ease-out; }
+.dialogue.nervous {
+  --dialogue-accent: rgb(31 145 184);
+  --dialogue-exit-duration: 280ms;
+}
+
+.dialogue.nervous.entering { animation: dialogue-nervous-in 420ms ease-out; }
+.dialogue.courtroom,
+.dialogue.impact {
+  --dialogue-accent: rgb(184 26 13);
 }
 
 .dialogue.courtroom {
-  border-color: rgb(163 25 25 / 70%);
-  color: #781414;
+  --dialogue-exit-duration: 250ms;
+}
+
+.dialogue.courtroom.entering { animation: dialogue-courtroom-in 380ms ease-out; }
+.dialogue.badge {
+  --dialogue-accent: rgb(232 156 26);
+  --dialogue-marker-color: rgb(48 33 8);
+  --dialogue-exit-duration: 320ms;
+}
+
+.dialogue.badge.entering { animation: dialogue-badge-in 440ms ease-out; }
+.dialogue.spiritual {
+  --dialogue-accent: rgb(26 148 69);
+  --dialogue-exit-duration: 480ms;
+}
+
+.dialogue.spiritual.entering { animation: dialogue-spiritual-in 550ms ease-out; }
+.dialogue.flashlight {
+  --dialogue-accent: rgb(240 184 31);
+  --dialogue-marker-color: rgb(48 33 8);
+  --dialogue-exit-duration: 220ms;
+}
+
+.dialogue.flashlight.entering { animation: dialogue-flashlight-in 460ms ease-out; }
+.dialogue.drag-protest {
+  --dialogue-accent: rgb(230 87 15);
+  --dialogue-exit-duration: 300ms;
+}
+
+.dialogue.drag-protest.entering { animation: dialogue-protest-in 280ms ease-out; }
+.dialogue.impact {
+  --dialogue-exit-duration: 140ms;
+}
+
+.dialogue.impact.entering { animation: dialogue-impact-in 80ms ease-out; }
+.dialogue.resigned {
+  --dialogue-accent: rgb(84 84 84);
+  --dialogue-exit-duration: 620ms;
 }
 
 .unlock-toast {
@@ -335,6 +444,64 @@ button { font: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes impact { 45% { transform: scale(.88) translateY(9px); } }
 @keyframes breathe { 50% { transform: scale(.985) translateY(3px); } }
+
+@keyframes dialogue-friendly-in {
+  from { opacity: 0; transform: translate(-50%, -7px) scale(.94); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-friendly-out {
+  from { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  to { opacity: 0; transform: translate(-50%, 8px) scale(.97); }
+}
+
+@keyframes dialogue-thought-in {
+  from { opacity: 0; transform: translate(-50%, -8px) scale(.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-nervous-in {
+  0% { opacity: 0; transform: translate(calc(-50% - 7px), 1px) scale(.86); }
+  35% { transform: translate(calc(-50% + 6px), -1px) scale(1.04); }
+  70% { transform: translate(calc(-50% - 5px), 0) scale(.98); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-courtroom-in {
+  0% { opacity: 0; transform: translate(calc(-50% - 260px), 10px); }
+  72% { transform: translate(calc(-50% + 12px), -4px); }
+  88% { transform: translate(calc(-50% - 4px), 0); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes dialogue-badge-in {
+  0% { opacity: 0; transform: translate(-50%, 7px) scale(1.55) rotate(-10deg); }
+  48% { opacity: 1; transform: translate(-50%, -2px) scale(.86) rotate(2.6deg); }
+  78% { transform: translate(-50%, 0) scale(1.04); }
+  100% { transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-spiritual-in {
+  0% { opacity: 0; transform: translate(-50%, -4px) scale(.82); }
+  65% { opacity: .9; transform: translate(-50%, 3px) scale(1.03); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-flashlight-in {
+  from { opacity: 0; transform: translate(calc(-50% + 15px), -6px) scale(.72); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-protest-in {
+  0% { opacity: 0; transform: translate(calc(-50% - 5px), 5px) scale(.88); }
+  60% { transform: translate(calc(-50% + 4px), -2px) scale(1.05); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes dialogue-impact-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 @keyframes objection-entrance {
   0% { opacity: 0; transform: translateX(-15px) scale(.16) rotate(-4.3deg); }
