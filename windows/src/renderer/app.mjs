@@ -20,6 +20,7 @@ const ACTIONS = Object.freeze({
   stepladder: action("stepladder", "这明明是人字梯！", 2_800, "pop", "easter.stepladder"),
   thinker: action("thinker", "把“思考者”加入证物。", 2_600, "pop", "easter.thinker"),
   "decisive-evidence": action("decisive-evidence", "找到决定性的证据了！", 2_400, "pop", "easter.decisive"),
+  flashlight: action("flashlight", "先把手电打开。", 3_200, "pop"),
   sleepy: action("sleepy", "就休息五分钟……", 3_000, "sleepy"),
   dropped: action("dropped", "下次先打声招呼！", 1_500, "impact"),
   thrown: action("thrown", "哇啊——！", 0, "thrown", "physics.thrown"),
@@ -232,7 +233,7 @@ function showContextMenu(event) {
   const policy = companionPolicy.snapshot();
   window.desktopPet.showContextMenu({
     activity: policy.level,
-    quietActive: policy.effective === "quiet",
+    quietUntil: policy.quietUntil,
   });
 }
 
@@ -240,6 +241,9 @@ function handleMenuCommand({ command, value }) {
   switch (command) {
     case "random":
       performAction(interactiveBag.next(INTERACTIVE_ACTIONS));
+      break;
+    case "help":
+      showTemporaryMessage("单击随机 · 双击异议 · 拖动搬家", 3_500);
       break;
     case "action":
       if (ACTIONS[value]) performAction(value);
@@ -261,7 +265,7 @@ function handleMenuCommand({ command, value }) {
       companionPolicy.quiet();
       persistPolicy();
       scheduleQuietExpiry();
-      showTemporaryMessage("好，30 分钟内我会安静待着。", 2_600);
+      showTemporaryMessage("好，30 分钟内我会安静待着。", 2_800);
       break;
     case "quiet-cancel":
       companionPolicy.cancelQuiet();

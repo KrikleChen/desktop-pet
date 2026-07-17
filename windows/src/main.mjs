@@ -156,26 +156,36 @@ function registerIPC() {
 
 function showContextMenu(state) {
   const sendCommand = (command, value) => sendToPet("menu-command", { command, value });
+  const actionItem = (value, label) => ({
+    label,
+    click: () => sendCommand("action", value),
+  });
   const startupEnabled = app.getLoginItemSettings().openAtLogin;
   const activity = ["focused", "balanced", "lively"].includes(state.activity)
     ? state.activity
     : "balanced";
+  const quietUntil = Number.isFinite(state.quietUntil) && state.quietUntil > Date.now()
+    ? state.quietUntil
+    : 0;
+  const quietRemainingMinutes = Math.max(1, Math.ceil((quietUntil - Date.now()) / 60_000));
   const template = [
-    { label: "随机动作", click: () => sendCommand("random") },
-    {
-      label: "经典动作",
-      submenu: [
-        ["objection", "异议！"],
-        ["slam", "拍桌"],
-        ["think", "思考案情"],
-        ["sweat", "紧张冒汗"],
-        ["evidence", "查看证物"],
-        ["magatama", "勾玉与心灵枷锁"],
-      ].map(([value, label]) => ({ label, click: () => sendCommand("action", value) })),
-    },
+    actionItem("objection", "异议！"),
+    actionItem("slam", "拍桌"),
+    actionItem("think", "思考案情"),
+    actionItem("sweat", "紧张冒汗"),
+    actionItem("evidence", "查看证物"),
+    actionItem("idle", "恢复站立"),
     { type: "separator" },
+    actionItem("badge-toss", "甩出律师徽章"),
+    actionItem("magatama", "勾玉与心灵枷锁"),
+    actionItem("stepladder", "梯子还是人字梯"),
+    actionItem("thinker", "出示“思考者”"),
+    actionItem("decisive-evidence", "决定性证据"),
+    actionItem("flashlight", "打开手电筒"),
+    { type: "separator" },
+    { label: "随机动作", click: () => sendCommand("random") },
+    { label: "操作提示", click: () => sendCommand("help") },
     { label: "开始交叉询问", click: () => sendCommand("cross-examination") },
-    { label: "散落六件证物", click: () => scatterAccessories() },
     {
       label: "陪伴节奏",
       submenu: [
@@ -183,11 +193,12 @@ function showContextMenu(state) {
         { label: "轻陪伴", type: "radio", checked: activity === "balanced", click: () => sendCommand("activity", "balanced") },
         { label: "活跃", type: "radio", checked: activity === "lively", click: () => sendCommand("activity", "lively") },
         { type: "separator" },
-        state.quietActive
-          ? { label: "取消安静模式", click: () => sendCommand("quiet-cancel") }
+        quietUntil
+          ? { label: `取消安静（剩余约 ${quietRemainingMinutes} 分钟）`, click: () => sendCommand("quiet-cancel") }
           : { label: "安静 30 分钟", click: () => sendCommand("quiet-start") },
       ],
     },
+    { type: "separator" },
     { label: "法庭记录…", click: () => sendCommand("court-record") },
     { type: "separator" },
     {
