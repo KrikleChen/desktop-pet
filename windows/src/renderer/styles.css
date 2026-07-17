@@ -393,56 +393,6 @@ button { font: inherit; }
 .cross-controls .object { color: #8c1616; border-color: rgb(185 35 35 / 55%); }
 .cross-controls .close { color: #555; border-radius: 50%; }
 
-.court-panel {
-  position: absolute;
-  z-index: 50;
-  inset: 5px;
-  overflow: hidden;
-  border: 1px solid rgb(68 76 87 / 48%);
-  border-radius: 13px;
-  color: #20262d;
-  background: rgb(249 249 247 / 98%);
-  box-shadow: 0 8px 22px rgb(0 0 0 / 24%);
-}
-
-.court-panel header {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 9px 0 13px;
-  border-bottom: 1px solid rgb(70 78 88 / 16%);
-}
-
-.court-panel h1 { margin: 0; font-size: 15px; }
-.court-panel header button {
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #555;
-  font-size: 18px;
-}
-
-.court-list {
-  height: calc(100% - 38px);
-  padding: 7px;
-  overflow-y: auto;
-}
-
-.court-entry {
-  margin-bottom: 6px;
-  padding: 7px 8px;
-  border-radius: 8px;
-  background: rgb(75 91 108 / 8%);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-.court-entry strong { display: block; font-size: 12px; }
-.court-entry.locked { color: #7c8289; filter: grayscale(1); }
-
 @keyframes action-idle {
   from { transform: translateY(0); }
   to { transform: translateY(-1.5px); }

@@ -16,6 +16,8 @@ const accessoryKinds = [
 ];
 
 let petWindow;
+let courtRecordWindow;
+let courtRecordPayload;
 let dragState;
 let throwTimer;
 let accessorySequence = 0;
@@ -49,6 +51,7 @@ app.on("window-all-closed", () => {});
 app.on("before-quit", () => {
   stopThrow();
   finishAccessorySession("quit", false);
+  courtRecordWindow?.destroy();
 });
 
 function createPetWindow() {
@@ -129,6 +132,16 @@ function registerIPC() {
     showContextMenu(state);
   });
 
+  ipcMain.on("show-court-record", (event, payload) => {
+    if (!isPetSender(event)) return;
+    const normalizedPayload = normalizeCourtRecordPayload(payload);
+    if (normalizedPayload) showCourtRecordWindow(normalizedPayload);
+  });
+
+  ipcMain.on("close-court-record", (event) => {
+    if (isPetSender(event) || isCourtRecordSender(event)) courtRecordWindow?.close();
+  });
+
   ipcMain.on("scatter-accessories", (event) => {
     if (!isPetSender(event)) return;
     scatterAccessories();
@@ -152,6 +165,67 @@ function registerIPC() {
   ipcMain.on("renderer-ready", (event) => {
     if (isPetSender(event)) rendererReady = true;
   });
+}
+
+function showCourtRecordWindow(payload) {
+  courtRecordPayload = payload;
+  if (courtRecordWindow && !courtRecordWindow.isDestroyed()) {
+    courtRecordWindow.webContents.send("court-record-data", courtRecordPayload);
+    courtRecordWindow.showInactive();
+    return;
+  }
+
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const ownerBounds = petWindow.getBounds();
+  const area = screen.getDisplayMatching(ownerBounds).workArea;
+  const panelWidth = 430;
+  const panelHeight = 520;
+  let x = ownerBounds.x - panelWidth - 14;
+  if (x < area.x + 8) x = ownerBounds.x + ownerBounds.width + 14;
+  x = Math.min(Math.max(x, area.x + 8), area.x + area.width - panelWidth - 8);
+  const y = Math.min(
+    Math.max(Math.round(ownerBounds.y + ownerBounds.height / 2 - panelHeight / 2), area.y + 8),
+    area.y + area.height - panelHeight - 8,
+  );
+
+  const window = new BrowserWindow({
+    width: panelWidth,
+    height: panelHeight,
+    x,
+    y,
+    useContentSize: true,
+    title: "法庭记录",
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: preloadPath,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: false,
+    },
+  });
+  courtRecordWindow = window;
+  window.setAlwaysOnTop(true, "floating");
+  window.setMenuBarVisibility(false);
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.on("did-finish-load", () => {
+    window.webContents.send("court-record-data", courtRecordPayload);
+  });
+  window.once("ready-to-show", () => window.showInactive());
+  window.on("closed", () => {
+    courtRecordWindow = undefined;
+    courtRecordPayload = undefined;
+    sendToPet("court-record-closed", {});
+  });
+  window.loadFile(path.join(rendererDirectory, "court-record.html"));
 }
 
 function showContextMenu(state) {
@@ -376,6 +450,36 @@ function sendToPet(channel, payload) {
 
 function isPetSender(event) {
   return petWindow && !petWindow.isDestroyed() && event.sender.id === petWindow.webContents.id;
+}
+
+function isCourtRecordSender(event) {
+  return courtRecordWindow
+    && !courtRecordWindow.isDestroyed()
+    && event.sender.id === courtRecordWindow.webContents.id;
+}
+
+function normalizeCourtRecordPayload(payload) {
+  if (!payload || !Array.isArray(payload.entries) || payload.entries.length > 64) return undefined;
+  const entries = [];
+  for (const rawEntry of payload.entries) {
+    if (!rawEntry || typeof rawEntry !== "object") return undefined;
+    const definition = rawEntry.definition;
+    if (!definition || typeof definition !== "object") return undefined;
+    const normalizedDefinition = {};
+    for (const key of ["id", "category", "icon", "title", "detail", "lockedHint"]) {
+      if (typeof definition[key] !== "string" || definition[key].length > 240) return undefined;
+      normalizedDefinition[key] = definition[key];
+    }
+    const progress = rawEntry.progress && typeof rawEntry.progress === "object"
+      ? {
+          count: Math.max(0, Math.min(Number(rawEntry.progress.count) || 0, Number.MAX_SAFE_INTEGER)),
+          unlockedAt: Number(rawEntry.progress.unlockedAt) || 0,
+          lastSeen: Number(rawEntry.progress.lastSeen) || 0,
+        }
+      : undefined;
+    entries.push({ definition: normalizedDefinition, progress });
+  }
+  return { entries };
 }
 
 function validPoint(value) {

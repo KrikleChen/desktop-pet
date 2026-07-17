@@ -1,0 +1,92 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body,
+main {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  color: #20242a;
+  background: #f4f4f2;
+}
+
+main { padding: 12px; }
+
+#summary {
+  height: 28px;
+  padding: 2px 4px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+#record-list {
+  height: calc(100% - 28px);
+  padding: 3px;
+  overflow-y: auto;
+}
+
+.record-row {
+  display: grid;
+  min-height: 76px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-rows: 22px minmax(39px, auto);
+  column-gap: 8px;
+  margin-bottom: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgb(0 122 255 / 25%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 92%);
+}
+
+.record-icon {
+  display: grid;
+  grid-row: 1 / 3;
+  place-items: center;
+  color: #0878da;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.record-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-detail {
+  color: #64676d;
+  font-size: 11.5px;
+  line-height: 17px;
+  white-space: pre-line;
+}
+
+.record-row.locked {
+  border-color: rgb(118 118 128 / 24%);
+  background: rgb(255 255 255 / 50%);
+}
+
+.record-row.locked .record-icon,
+.record-row.locked .record-title,
+.record-row.locked .record-detail {
+  color: #989ba1;
+}
+
+@media (prefers-color-scheme: dark) {
+  body { color: #ececef; background: #292a2d; }
+  .record-row { background: rgb(58 59 63 / 92%); }
+  .record-detail { color: #b9bac0; }
+  .record-row.locked { background: rgb(58 59 63 / 50%); }
+}

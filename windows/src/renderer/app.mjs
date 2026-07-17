@@ -91,9 +91,6 @@ const dom = {
   next: document.querySelector("#cross-next"),
   object: document.querySelector("#cross-object"),
   crossClose: document.querySelector("#cross-close"),
-  court: document.querySelector("#court-panel"),
-  courtList: document.querySelector("#court-list"),
-  courtClose: document.querySelector("#court-close"),
 };
 
 const assetURLs = new Map();
@@ -117,6 +114,7 @@ let objectionHideTimer;
 let objectionFinishTimer;
 let dialogueExitTimer;
 let dialogueTypeTimer;
+let courtRecordOpen = false;
 let pointerState;
 let suppressClickUntil = 0;
 let activeAccessorySession;
@@ -154,8 +152,6 @@ function wireInteractions() {
   dom.next.addEventListener("click", () => navigateCross(1));
   dom.object.addEventListener("click", objectDuringCross);
   dom.crossClose.addEventListener("click", () => cancelCross(true));
-  dom.courtClose.addEventListener("click", closeCourtRecord);
-
   window.desktopPet.onMenuCommand(handleMenuCommand);
   window.desktopPet.onMenuClosed(() => {
     presentDeferredFeedback();
@@ -163,11 +159,16 @@ function wireInteractions() {
   });
   window.desktopPet.onMotionEvent(handleMotionEvent);
   window.desktopPet.onAccessoryEvent(handleAccessoryEvent);
+  window.desktopPet.onCourtRecordClosed(() => {
+    const wasOpen = courtRecordOpen;
+    courtRecordOpen = false;
+    if (wasOpen) showIdle();
+  });
 }
 
 function beginPointerInteraction(event) {
   if (event.button !== 0) return;
-  if (!dom.court.classList.contains("hidden")) return;
+  if (courtRecordOpen) return;
   cancelCross(false);
   markInteraction();
   pointerState = {
@@ -635,7 +636,7 @@ function handleMotionEvent(event) {
 }
 
 function presentDeferredFeedback() {
-  if (currentAction !== "idle" || crossToken || !dom.court.classList.contains("hidden")) return;
+  if (currentAction !== "idle" || crossToken || courtRecordOpen) return;
   if (pendingAccessoryReward) {
     const reward = pendingAccessoryReward;
     pendingAccessoryReward = undefined;
@@ -661,6 +662,7 @@ function recordCourtEntry(id) {
     lastSeen: now,
   };
   localStorage.setItem("court-progress", JSON.stringify(courtProgress));
+  if (courtRecordOpen) presentCourtRecordWindow();
   if (!existing) {
     toastQueue.push(definition.title);
     presentDeferredFeedback();
@@ -668,7 +670,7 @@ function recordCourtEntry(id) {
 }
 
 function showNextToast() {
-  if (currentAction !== "idle" || crossToken || pendingAccessoryReward) return;
+  if (currentAction !== "idle" || crossToken || courtRecordOpen || pendingAccessoryReward) return;
   if (!currentToast) currentToast = toastQueue.shift();
   if (!currentToast) return;
   dom.toast.textContent = `★ 新记录：${currentToast}`;
@@ -691,31 +693,26 @@ function showCourtRecord() {
   markInteraction();
   cancelCross(false);
   window.desktopPet.cancelAccessories();
-  dom.court.classList.remove("hidden");
   suspendToast();
-  renderCourtRecord();
+  showIdle();
+  courtRecordOpen = true;
+  presentCourtRecordWindow();
 }
 
 function closeCourtRecord(restore = true) {
-  const wasOpen = !dom.court.classList.contains("hidden");
-  dom.court.classList.add("hidden");
+  const wasOpen = courtRecordOpen;
+  courtRecordOpen = false;
+  window.desktopPet.closeCourtRecord();
   if (restore && wasOpen) showIdle();
 }
 
-function renderCourtRecord() {
-  dom.courtList.replaceChildren(...COURT_CATALOG.map((definition) => {
-    const progress = courtProgress[definition.id];
-    const entry = document.createElement("article");
-    entry.className = `court-entry${progress ? "" : " locked"}`;
-    const title = document.createElement("strong");
-    title.textContent = progress ? definition.title : "未解锁";
-    const detail = document.createElement("span");
-    detail.textContent = progress
-      ? `${definition.detail} · 触发 ${progress.count} 次`
-      : "继续互动，也许会发现新的记录。";
-    entry.append(title, detail);
-    return entry;
-  }));
+function presentCourtRecordWindow() {
+  window.desktopPet.showCourtRecord({
+    entries: COURT_CATALOG.map((definition) => ({
+      definition,
+      progress: courtProgress[definition.id],
+    })),
+  });
 }
 
 function markInteraction() {
@@ -732,7 +729,7 @@ function scheduleIdle() {
   idleTimer = setTimeout(() => {
     const trulyIdle = currentAction === "idle"
       && !crossToken
-      && dom.court.classList.contains("hidden")
+      && !courtRecordOpen
       && activeAccessorySession === undefined;
     if (trulyIdle && Math.random() <= profile.probability) {
       performAction(ambientBag.next(AMBIENT_ACTIONS), { record: true });
