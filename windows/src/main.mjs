@@ -8,6 +8,7 @@ import {
   easedProgress,
 } from "./shared/accessory-motion.mjs";
 import { stepAccessoryPhysics } from "./shared/accessory-scatter.mjs";
+import { createThrowState, stepThrowPhysics } from "./shared/throw-physics.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = path.join(moduleDirectory, "renderer");
@@ -35,6 +36,8 @@ let courtRecordWindow;
 let courtRecordPayload;
 let dragState;
 let throwTimer;
+let throwState;
+let throwVisibleFrames = [];
 let accessorySequence = 0;
 let activeAccessorySession;
 let accessoryPhysicsTimer;
@@ -635,49 +638,35 @@ function destroyAccessoryTrail(entry) {
 function startThrow(initialVelocity) {
   stopThrow();
   if (!petWindow) return;
-  let velocityX = initialVelocity.x;
-  let velocityY = initialVelocity.y;
+  const initialBounds = petWindow.getBounds();
+  const targetArea = screen.getDisplayMatching(initialBounds).workArea;
+  const bounds = {
+    ...initialBounds,
+    x: clamp(initialBounds.x, targetArea.x, targetArea.x + targetArea.width - initialBounds.width),
+    y: clamp(initialBounds.y, targetArea.y, targetArea.y + targetArea.height - initialBounds.height),
+  };
+  petWindow.setPosition(Math.round(bounds.x), Math.round(bounds.y), false);
+  throwState = createThrowState(bounds, initialVelocity);
+  throwVisibleFrames = screen.getAllDisplays().map((display) => display.workArea);
   let lastTime = performance.now();
-  let elapsed = 0;
   let strongest = "light";
   sendToPet("motion-event", { type: "throw-start" });
 
   throwTimer = setInterval(() => {
-    if (!petWindow || petWindow.isDestroyed()) return stopThrow();
+    if (!petWindow || petWindow.isDestroyed() || !throwState) return stopThrow();
     const now = performance.now();
-    const delta = Math.min(0.035, (now - lastTime) / 1_000);
+    const delta = (now - lastTime) / 1_000;
     lastTime = now;
-    elapsed += delta;
-    const bounds = petWindow.getBounds();
-    const area = screen.getDisplayMatching(bounds).workArea;
-    let x = bounds.x + velocityX * delta;
-    let y = bounds.y + velocityY * delta;
-    velocityY += 1_650 * delta;
-    velocityX *= Math.pow(0.55, delta);
-    let impactSpeed = 0;
-
-    if (x < area.x || x + bounds.width > area.x + area.width) {
-      x = Math.max(area.x, Math.min(x, area.x + area.width - bounds.width));
-      impactSpeed = Math.max(impactSpeed, Math.abs(velocityX));
-      velocityX *= -0.20;
-      velocityY *= 0.68;
-    }
-    if (y < area.y || y + bounds.height > area.y + area.height) {
-      y = Math.max(area.y, Math.min(y, area.y + area.height - bounds.height));
-      impactSpeed = Math.max(impactSpeed, Math.abs(velocityY));
-      velocityY *= -0.20;
-      velocityX *= 0.68;
-    }
-
-    petWindow.setPosition(Math.round(x), Math.round(y), false);
-    if (impactSpeed > 0) {
-      const severity = impactSpeed >= 1_100 ? "heavy" : impactSpeed >= 420 ? "medium" : "light";
+    const result = stepThrowPhysics(throwState, throwVisibleFrames, delta);
+    throwState = result.state;
+    petWindow.setPosition(Math.round(throwState.x), Math.round(throwState.y), false);
+    if (result.impact) {
+      const { severity } = result.impact;
       if (severity === "heavy" || (severity === "medium" && strongest === "light")) strongest = severity;
       sendToPet("motion-event", { type: "bounce", severity });
     }
 
-    const onFloor = Math.abs(y + bounds.height - (area.y + area.height)) < 2;
-    if ((onFloor && Math.hypot(velocityX, velocityY) < 175) || elapsed > 4.5) {
+    if (result.shouldSettle || throwState.elapsed >= 4.5) {
       stopThrow();
       sendToPet("motion-event", { type: "settled", severity: strongest });
     }
@@ -688,6 +677,8 @@ function startThrow(initialVelocity) {
 function stopThrow() {
   if (throwTimer) clearInterval(throwTimer);
   throwTimer = undefined;
+  throwState = undefined;
+  throwVisibleFrames = [];
 }
 
 function sendToPet(channel, payload) {
