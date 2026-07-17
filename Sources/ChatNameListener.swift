@@ -1,7 +1,8 @@
 import AppKit
 import ApplicationServices
 
-/// 通过 macOS 辅助功能 API 检测当前输入框中新出现的“成步堂龙一”。
+/// 通过 macOS 辅助功能 API 检测当前输入框中新出现的
+/// “成步堂龙一”或“成步堂”。
 ///
 /// 监听器只读取当前获得焦点、可编辑且非安全输入框的值。正文仅在一次轮询的
 /// 局部变量中短暂存在；不会记录、持久化或联网发送。跨轮询只保留控件哈希和
@@ -57,7 +58,7 @@ final class ChatNameListener {
         case unsupported(diagnostic: String)
     }
 
-    private let targetName = "成步堂龙一"
+    private let mentionDetector = ChatNameMentionDetector()
     private let pollInterval: TimeInterval
     private let permissionPollInterval: TimeInterval = 0.75
     private let systemWideElement = AXUIElementCreateSystemWide()
@@ -378,9 +379,7 @@ final class ChatNameListener {
 
     private func detectTargetName(in text: String, from element: AXUIElement) {
         let key = elementKey(for: element)
-        let containsTarget = text
-            .precomposedStringWithCanonicalMapping
-            .contains(targetName)
+        let containsTarget = mentionDetector.containsTarget(in: text)
         let previouslyContainedTarget = targetPresenceByElement[key] ?? false
 
         remember(containsTarget, for: key)

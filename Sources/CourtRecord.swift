@@ -61,6 +61,7 @@ enum CourtRecordCategory: String {
     case environment = "环境反应"
     case nameResponse = "名字回应"
     case physics = "桌面互动"
+    case challenge = "庭审挑战"
 
     var icon: String {
         switch self {
@@ -70,6 +71,7 @@ enum CourtRecordCategory: String {
         case .environment: return "☾"
         case .nameResponse: return "♪"
         case .physics: return "↗"
+        case .challenge: return "◆"
         }
     }
 }
@@ -88,6 +90,8 @@ enum CourtRecordID {
     static let thrown = "physics.thrown"
     static let upsideDownScatter = "physics.upside-down-scatter"
     static let edgeRest = "environment.edge-rest"
+    static let crossExamination = "challenge.cross-examination"
+    static let orderedEvidenceArchive = "challenge.ordered-evidence-archive"
 
     static func action(_ action: PetAction) -> String? {
         switch action {
@@ -194,7 +198,24 @@ enum CourtRecordCatalog {
             ),
         ]
 
-        let catalog = classics + easterEggs + grabs + reactions
+        let challenges: [CourtRecordDefinition] = [
+            CourtRecordDefinition(
+                id: CourtRecordID.crossExamination,
+                category: .challenge,
+                title: "交叉询问",
+                detail: "从三句证言中找出了真正的矛盾。",
+                lockedHint: "右键菜单里，也许能开始一次短暂的庭审。"
+            ),
+            CourtRecordDefinition(
+                id: CourtRecordID.orderedEvidenceArchive,
+                category: .challenge,
+                title: "完美归档",
+                detail: "六件证物按照指定顺序完整归档。",
+                lockedHint: "散落的证物，也有一条严谨的归档顺序。"
+            ),
+        ]
+
+        let catalog = classics + easterEggs + grabs + reactions + challenges
         assert(Set(catalog.map(\.id)).count == catalog.count, "法庭记录条目 ID 不可重复")
         return catalog
     }()
@@ -234,6 +255,36 @@ enum CourtRecordActionRecorder {
 
 extension Notification.Name {
     static let courtRecordStoreDidChange = Notification.Name("CourtRecordStoreDidChange")
+    static let courtRecordStoreDidUnlock = Notification.Name("CourtRecordStoreDidUnlock")
+}
+
+/// `courtRecordStoreDidUnlock` 的类型化载荷。
+///
+/// 与用于刷新面板的 `courtRecordStoreDidChange` 分开，只表示一条记录从
+/// 未解锁变为已解锁。播报层应只监听这个事件。
+struct CourtRecordUnlockEvent: Equatable {
+    static let recordIDUserInfoKey = "CourtRecordUnlockRecordID"
+
+    let recordID: String
+
+    init(recordID: String) {
+        self.recordID = recordID
+    }
+
+    init?(notification: Notification) {
+        guard
+            notification.name == .courtRecordStoreDidUnlock,
+            let recordID = notification.userInfo?[Self.recordIDUserInfoKey] as? String,
+            !recordID.isEmpty
+        else {
+            return nil
+        }
+        self.recordID = recordID
+    }
+
+    fileprivate var notificationUserInfo: [AnyHashable: Any] {
+        [Self.recordIDUserInfoKey: recordID]
+    }
 }
 
 final class CourtRecordStore {
@@ -298,7 +349,7 @@ final class CourtRecordStore {
             count: 0,
             lastSeen: date
         )
-        persist()
+        persist(unlockedRecordID: id)
         return true
     }
 
@@ -321,7 +372,7 @@ final class CourtRecordStore {
             )
         }
 
-        persist()
+        persist(unlockedRecordID: wasNew ? id : nil)
         return wasNew
     }
 
@@ -331,18 +382,28 @@ final class CourtRecordStore {
         record(id, at: date)
     }
 
-    private func persist(notify: Bool = true) {
+    private func persist(notify: Bool = true, unlockedRecordID: String? = nil) {
         guard let data = try? JSONEncoder().encode(progress) else { return }
         defaults.set(data, forKey: Self.storageKey)
         guard notify else { return }
 
-        if Thread.isMainThread {
+        let postNotifications = { [weak self] in
+            guard let self = self else { return }
             NotificationCenter.default.post(name: .courtRecordStoreDidChange, object: self)
+
+            guard let unlockedRecordID = unlockedRecordID else { return }
+            let event = CourtRecordUnlockEvent(recordID: unlockedRecordID)
+            NotificationCenter.default.post(
+                name: .courtRecordStoreDidUnlock,
+                object: self,
+                userInfo: event.notificationUserInfo
+            )
+        }
+
+        if Thread.isMainThread {
+            postNotifications()
         } else {
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                NotificationCenter.default.post(name: .courtRecordStoreDidChange, object: self)
-            }
+            DispatchQueue.main.async(execute: postNotifications)
         }
     }
 }

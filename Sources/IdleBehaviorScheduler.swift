@@ -13,15 +13,18 @@ final class IdleBehaviorScheduler {
     /// reports that the pet is still completely idle.
     var onIdleOpportunity: IdleOpportunityHandler?
 
-    private static let initialDelay: TimeInterval = 75
-    private static let subsequentDelayRange: ClosedRange<TimeInterval> = 120...240
-    private static let opportunityProbability = 0.65
-
     private let isTrulyIdle: IdlePredicate
+    private let profileProvider: () -> CompanionIdleProfile
     private var timer: Timer?
     private var isRunning = false
 
-    init(isTrulyIdle: @escaping IdlePredicate) {
+    init(
+        profileProvider: @escaping () -> CompanionIdleProfile = {
+            .profile(for: .balanced)
+        },
+        isTrulyIdle: @escaping IdlePredicate
+    ) {
+        self.profileProvider = profileProvider
         self.isTrulyIdle = isTrulyIdle
     }
 
@@ -32,7 +35,7 @@ final class IdleBehaviorScheduler {
         guard !isRunning else { return }
 
         isRunning = true
-        schedule(after: Self.initialDelay)
+        refreshProfile()
     }
 
     /// Stops scheduling and invalidates any pending opportunity.
@@ -48,7 +51,26 @@ final class IdleBehaviorScheduler {
         precondition(Thread.isMainThread, "IdleBehaviorScheduler must be used on the main thread")
         guard isRunning else { return }
 
-        schedule(after: Self.randomSubsequentDelay())
+        let profile = profileProvider()
+        guard profile.isSchedulingEnabled else {
+            invalidateTimer()
+            return
+        }
+        schedule(after: Self.randomDelay(in: profile.subsequentDelayRange))
+    }
+
+    /// Re-evaluates the current activity profile after a user-facing mode
+    /// change or a temporary quiet period expires.
+    func refreshProfile() {
+        precondition(Thread.isMainThread, "IdleBehaviorScheduler must be used on the main thread")
+        guard isRunning else { return }
+
+        let profile = profileProvider()
+        guard profile.isSchedulingEnabled else {
+            invalidateTimer()
+            return
+        }
+        schedule(after: profile.initialDelay)
     }
 
     deinit {
@@ -69,13 +91,18 @@ final class IdleBehaviorScheduler {
         timer = nil
         guard isRunning else { return }
 
-        if isTrulyIdle(), Double.random(in: 0...1) < Self.opportunityProbability {
+        let profile = profileProvider()
+        guard profile.isSchedulingEnabled else { return }
+
+        if isTrulyIdle(), Double.random(in: 0...1) < profile.opportunityProbability {
             onIdleOpportunity?()
         }
 
         // The callback may stop the scheduler or reset the cooldown itself.
         guard isRunning, timer == nil else { return }
-        schedule(after: Self.randomSubsequentDelay())
+        let nextProfile = profileProvider()
+        guard nextProfile.isSchedulingEnabled else { return }
+        schedule(after: Self.randomDelay(in: nextProfile.subsequentDelayRange))
     }
 
     private func invalidateTimer() {
@@ -83,7 +110,9 @@ final class IdleBehaviorScheduler {
         timer = nil
     }
 
-    private static func randomSubsequentDelay() -> TimeInterval {
-        TimeInterval.random(in: subsequentDelayRange)
+    private static func randomDelay(
+        in range: ClosedRange<TimeInterval>
+    ) -> TimeInterval {
+        TimeInterval.random(in: range)
     }
 }

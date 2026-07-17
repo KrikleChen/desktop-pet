@@ -19,5 +19,13 @@ xcrun swiftc \
 cp "$ROOT/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT"/Assets/*-cg.png "$RESOURCES/"
 
-codesign --force --deep --sign - "$APP"
+# Keep a stable designated requirement across local rebuilds. Without this,
+# ad-hoc signing falls back to a cdhash-only requirement, so macOS keeps showing
+# the old Accessibility entry as enabled while rejecting the rebuilt binary.
+codesign \
+    --force \
+    --deep \
+    --sign - \
+    --requirements '=designated => identifier "com.ymatrix.phoenix-desktop-pet"' \
+    "$APP"
 echo "已生成：$APP"

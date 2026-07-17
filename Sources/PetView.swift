@@ -68,21 +68,47 @@ struct AccessoryPreviewLifecycleState {
     }
 }
 
+private enum AccessoryCompletionReward: Equatable {
+    case standard
+    case ordered
+
+    var message: String {
+        switch self {
+        case .standard:
+            return "六件证物全部归档。这就是完整的证据链！"
+        case .ordered:
+            return "顺序也完全吻合。现在，证据链没有缺口了！"
+        }
+    }
+}
+
 final class PetView: NSView {
     private let imageView = NSImageView()
     private let bubbleView = SpeechBubbleView()
+    private let courtRecordUnlockToastView = CourtRecordUnlockToastView(frame: .zero)
     private let objectionBurstView = ObjectionBurstView(frame: .zero)
     private let dialogueController = DialoguePresentationController()
     private let edgeMotionEffectView = EdgeMotionEffectView(frame: .zero)
     private let followUpHotspotView = FollowUpHotspotView(frame: .zero)
     private let followUpChoiceView = FollowUpChoiceView(frame: .zero)
+    private let crossExaminationView = CrossExaminationView(frame: .zero)
+    private let orderedEvidenceArchiveHUDView = OrderedEvidenceArchiveHUDView(frame: .zero)
     private let images: [PetAction: NSImage]
     private let chatNameListener = ChatNameListener()
     private let courtRecordStore = CourtRecordStore.shared
+    private let companionActivityPolicy = CompanionActivityPolicy()
     private let dragVelocityTracker = DragVelocityTracker()
     private let shakeGestureDetector = ShakeGestureDetector()
     private let accessoryScatterController = AccessoryScatterController()
     private var interactionMemory = InteractionMemory()
+    private var interactiveActionBag = PetActionBag<PetAction>()
+    private var idleActionBag = PetActionBag<PetAction>()
+    private var accessoryCollectionProgress = AccessoryCollectionProgress()
+    private var orderedEvidenceArchive = OrderedEvidenceArchive()
+    private var orderedEvidenceOrderGenerator = OrderedEvidenceArchiveOrderGenerator()
+    private var crossExaminationQuestionBag = CrossExaminationQuestionBag()
+    private var crossExaminationRound = CrossExaminationRound()
+    private var courtRecordUnlockQueue = CourtRecordUnlockAnnouncementQueue()
     private var edgeIdleBehavior = EdgeIdleBehavior(configuration: .init(
         stableDuration: 0,
         minimumIdleDuration: 60,
@@ -101,11 +127,17 @@ final class PetView: NSView {
     private var throwRecoveryWorkItems: [DispatchWorkItem] = []
     private var accessoryPreviewLaunchWorkItem: DispatchWorkItem?
     private var accessoryPreviewReclaimWorkItem: DispatchWorkItem?
+    private var accessoryCompletionRewardWorkItem: DispatchWorkItem?
+    private var pendingAccessoryCompletionReward: AccessoryCompletionReward?
+    private var crossExaminationFeedbackWorkItem: DispatchWorkItem?
+    private var courtRecordUnlockWorkItem: DispatchWorkItem?
+    private var companionModeExpirationWorkItem: DispatchWorkItem?
     private var idleScheduler: IdleBehaviorScheduler!
     private var throwPhysicsController: ThrowPhysicsController?
     private var courtRecordPanelController: CourtRecordPanelController?
     private var petTrackingArea: NSTrackingArea?
     private var isMouseInside = false
+    private var isContextMenuOpen = false
     private var followUpOriginAction: PetAction?
     private var accessoryImages: [NSImage] = []
     private var lastThrowImpactTimestamp: TimeInterval = 0
@@ -113,11 +145,15 @@ final class PetView: NSView {
     private var lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
     private var lastNameListenerStatus: ChatNameListener.Status = .stopped
     private var environmentDetectionGeneration = 0
+    private var temporaryMessageGeneration: UInt64 = 0
     private var accessoryScatterRecordsDiscovery = true
     private var accessoryPreviewLifecycle = AccessoryPreviewLifecycleState()
     private var accessoryPreviewReclaimGeneration: UInt64 = 0
     private var accessoryPreviewSessionIsCurrent: (() -> Bool)?
     private var accessoryPreviewSessionIsCurrentOrFinished: (() -> Bool)?
+    private var courtRecordUnlockObserver: NSObjectProtocol?
+    private var presentedCourtRecordUnlock: CourtRecordUnlockAnnouncement?
+    private var activeCrossExaminationToken: CrossExaminationSessionToken?
 
     private var mouseDownLocation = NSPoint.zero
     private var windowOriginOnMouseDown = NSPoint.zero
@@ -136,8 +172,11 @@ final class PetView: NSView {
         addSubview(edgeMotionEffectView)
         addSubview(imageView)
         addSubview(bubbleView)
+        addSubview(courtRecordUnlockToastView)
+        addSubview(orderedEvidenceArchiveHUDView)
         addSubview(followUpHotspotView)
         addSubview(followUpChoiceView)
+        addSubview(crossExaminationView)
 
         followUpHotspotView.onActivate = { [weak self] in
             self?.activateFollowUp()
@@ -154,11 +193,60 @@ final class PetView: NSView {
         followUpChoiceView.onRightMouseDown = { [weak self] event in
             self?.rightMouseDown(with: event)
         }
+        crossExaminationView.onPrevious = { [weak self] in
+            self?.navigateCrossExamination(previous: true)
+        }
+        crossExaminationView.onNext = { [weak self] in
+            self?.navigateCrossExamination(previous: false)
+        }
+        crossExaminationView.onObject = { [weak self] in
+            self?.objectDuringCrossExamination()
+        }
+        crossExaminationView.onCancel = { [weak self] in
+            self?.cancelFollowUp(returnToIdle: true)
+        }
+        crossExaminationView.onRightMouseDown = { [weak self] event in
+            guard let self else { return }
+            self.cancelFollowUp(returnToIdle: true)
+            self.rightMouseDown(with: event)
+        }
 
         accessoryImages = Self.loadAccessoryImages()
         accessoryScatterController.reclaimTargetProvider = { [weak self] in
             guard let frame = self?.window?.frame else { return nil }
             return NSPoint(x: frame.midX + 28, y: frame.minY + 108)
+        }
+        accessoryScatterController.onTriggered = { [weak self] count in
+            guard
+                let self,
+                let sessionID = self.accessoryScatterController.activeSessionID
+            else { return }
+            self.accessoryCompletionRewardWorkItem?.cancel()
+            self.accessoryCompletionRewardWorkItem = nil
+            self.pendingAccessoryCompletionReward = nil
+            let expectedKinds = Set(AccessoryKind.allCases.prefix(max(0, count)))
+            let roundMode: AccessoryCollectionRoundMode = self.accessoryScatterRecordsDiscovery
+                ? .real
+                : .preview
+            self.accessoryCollectionProgress.begin(
+                sessionID: sessionID,
+                mode: roundMode,
+                expectedKinds: expectedKinds
+            )
+            let orderedStart = self.orderedEvidenceArchive.begin(
+                sessionID: sessionID,
+                mode: roundMode,
+                expectedKinds: expectedKinds,
+                order: roundMode == .real && expectedKinds == Set(AccessoryKind.allCases)
+                    ? self.orderedEvidenceOrderGenerator.nextOrder()
+                    : []
+            )
+            switch orderedStart {
+            case let .started(snapshot):
+                self.orderedEvidenceArchiveHUDView.show(snapshot)
+            case .ineligible:
+                self.orderedEvidenceArchiveHUDView.hide()
+            }
         }
         accessoryScatterController.onAccessoryReclaimedEvent = { [weak self] event in
             guard let self, !self.didDrag else { return }
@@ -168,6 +256,41 @@ final class PetView: NSView {
                 // 用户先点了预览道具时，取消尚未执行的自动回收，避免稍后再抢画面。
                 self.cancelAccessoryPreviewReclaimTask()
             }
+            var progressParts: [String] = []
+            if let sessionID = self.accessoryScatterController.activeSessionID {
+                switch self.accessoryCollectionProgress.recordReclaimed(
+                    event.kind,
+                    sessionID: sessionID
+                ) {
+                case let .recorded(collectedCount, _):
+                    progressParts.append(
+                        "已归档 \(collectedCount)/\(AccessoryKind.allCases.count)"
+                    )
+                case .duplicate, .ignored:
+                    break
+                }
+
+                switch self.orderedEvidenceArchive.recordReclaimed(
+                    event.kind,
+                    sessionID: sessionID
+                ) {
+                case let .advanced(snapshot):
+                    self.orderedEvidenceArchiveHUDView.show(snapshot)
+                    progressParts.append("有序 \(snapshot.completedCount)/\(snapshot.order.count)")
+                case let .failed(snapshot):
+                    self.orderedEvidenceArchiveHUDView.show(snapshot)
+                    progressParts.append("顺序断了，继续普通归档")
+                case let .completed(snapshot):
+                    self.orderedEvidenceArchiveHUDView.show(snapshot)
+                    progressParts.append("顺序完全吻合")
+                case .duplicate, .ignored:
+                    break
+                }
+            }
+            let progressSuffix = progressParts.isEmpty
+                ? ""
+                : "  " + progressParts.joined(separator: " · ")
+
             let response: (action: PetAction, message: String)
             switch event.kind {
             case .attorneyBadge:
@@ -185,7 +308,7 @@ final class PetView: NSView {
             }
             self.perform(
                 response.action,
-                messageOverride: response.message,
+                messageOverride: response.message + progressSuffix,
                 countAsInteraction: recordsDiscovery,
                 recordsInCourtRecord: recordsDiscovery
             )
@@ -193,7 +316,24 @@ final class PetView: NSView {
         accessoryScatterController.onFinished = { [weak self] in
             guard let self else { return }
             let wasPreview = !self.accessoryScatterRecordsDiscovery
+            let collectionSessionID = self.accessoryCollectionProgress.activeSessionID
+            let collectionResult = collectionSessionID.map {
+                self.accessoryCollectionProgress.finish(sessionID: $0)
+            } ?? .ignored
+            let orderedResult = collectionSessionID.map {
+                self.orderedEvidenceArchive.finish(sessionID: $0)
+            } ?? .ignored
+            self.orderedEvidenceArchiveHUDView.hide()
             self.accessoryScatterRecordsDiscovery = true
+
+            if collectionResult == .reward, !wasPreview {
+                if orderedResult == .reward {
+                    self.courtRecordStore.record(CourtRecordID.orderedEvidenceArchive)
+                    self.scheduleAccessoryCollectionReward(.ordered)
+                } else {
+                    self.scheduleAccessoryCollectionReward(.standard)
+                }
+            }
             guard
                 wasPreview,
                 let previewID = self.accessoryPreviewLifecycle.activePreviewID,
@@ -205,24 +345,40 @@ final class PetView: NSView {
             )
         }
 
+        courtRecordUnlockObserver = NotificationCenter.default.addObserver(
+            forName: .courtRecordStoreDidUnlock,
+            object: courtRecordStore,
+            queue: .main
+        ) { [weak self] notification in
+            guard let event = CourtRecordUnlockEvent(notification: notification) else { return }
+            self?.enqueueCourtRecordUnlock(recordID: event.recordID)
+        }
+
         showIdle()
         showTemporaryMessage("单击随机动作 · 双击异议 · 右键菜单", duration: 4.0)
 
-        idleScheduler = IdleBehaviorScheduler { [weak self] in
-            guard let self else { return false }
-            return self.currentAction == .idle
-                && self.interactionMode == .ordinary
-                && !self.didDrag
-        }
+        idleScheduler = IdleBehaviorScheduler(
+            profileProvider: { [weak self] in
+                self?.companionActivityPolicy.idleProfile()
+                    ?? .profile(for: .balanced)
+            },
+            isTrulyIdle: { [weak self] in
+                guard let self else { return false }
+                return self.companionActivityPolicy.allows(.ambient)
+                    && self.currentAction == .idle
+                    && self.interactionMode == .ordinary
+                    && !self.didDrag
+            }
+        )
         idleScheduler.onIdleOpportunity = { [weak self] in
             self?.performScheduledIdleOpportunity()
         }
         idleScheduler.start()
+        applyCompanionActivityPolicy()
 
         chatNameListener.onNameDetected = { [weak self] in
             guard let self, !self.didDrag else { return }
             self.cancelFollowUp(returnToIdle: false)
-            self.courtRecordStore.record(CourtRecordID.nameResponse)
             let response = self.interactionMemory.recordNameCall(
                 at: ProcessInfo.processInfo.systemUptime
             )
@@ -268,6 +424,9 @@ final class PetView: NSView {
     }
 
     deinit {
+        if let courtRecordUnlockObserver {
+            NotificationCenter.default.removeObserver(courtRecordUnlockObserver)
+        }
         idleScheduler?.stop()
         resetWorkItem?.cancel()
         bubbleWorkItem?.cancel()
@@ -276,11 +435,16 @@ final class PetView: NSView {
         environmentWorkItem?.cancel()
         followUpExpirationWorkItem?.cancel()
         followUpSequenceWorkItems.forEach { $0.cancel() }
+        crossExaminationFeedbackWorkItem?.cancel()
         throwRecoveryWorkItems.forEach { $0.cancel() }
         accessoryPreviewLaunchWorkItem?.cancel()
         accessoryPreviewReclaimWorkItem?.cancel()
+        accessoryCompletionRewardWorkItem?.cancel()
+        courtRecordUnlockWorkItem?.cancel()
+        companionModeExpirationWorkItem?.cancel()
         throwPhysicsController?.cancel()
         shakeGestureDetector.cancelCurrentGrab()
+        cancelTrackedAccessoryCollection()
         accessoryScatterController.cancelAndRemoveAll()
         edgeMotionEffectView.stop()
     }
@@ -310,7 +474,6 @@ final class PetView: NSView {
             self.cancelThrowRecovery()
             self.strongestThrowImpact = .light
             self.lastThrowImpactTimestamp = 0
-            self.courtRecordStore.record(CourtRecordID.thrown)
             let teasingStage = self.interactionMemory.teasingStage(
                 at: ProcessInfo.processInfo.systemUptime
             )
@@ -359,7 +522,12 @@ final class PetView: NSView {
             // 碰撞台词至少稳定停留一小段时间，不能刚出现就被下一句替换。
             self.scheduleThrowRecovery(after: 0.65) { [weak self, weak controller] in
                 guard let self, let controller, controller.isRunning else { return }
-                self.perform(.thrown, autoReset: false, messageOverride: afterMessage)
+                self.perform(
+                    .thrown,
+                    autoReset: false,
+                    messageOverride: afterMessage,
+                    recordsInCourtRecord: false
+                )
             }
         }
         controller.onSettled = { [weak self] _ in
@@ -375,8 +543,21 @@ final class PetView: NSView {
         edgeMotionEffectView.frame = bounds
         imageView.frame = NSRect(x: 18, y: 0, width: bounds.width - 36, height: 180)
         bubbleView.frame = NSRect(x: 8, y: bounds.height - 51, width: bounds.width - 16, height: 49)
+        courtRecordUnlockToastView.frame = NSRect(
+            x: 14,
+            y: 182,
+            width: bounds.width - 28,
+            height: 24
+        )
+        orderedEvidenceArchiveHUDView.frame = NSRect(
+            x: 8,
+            y: 3,
+            width: bounds.width - 16,
+            height: 32
+        )
         followUpHotspotView.frame = NSRect(x: bounds.midX + 31, y: 145, width: 25, height: 25)
         followUpChoiceView.frame = NSRect(x: 8, y: 3, width: bounds.width - 16, height: 35)
+        crossExaminationView.frame = NSRect(x: 8, y: 3, width: bounds.width - 16, height: 35)
     }
 
     override func updateTrackingAreas() {
@@ -415,6 +596,9 @@ final class PetView: NSView {
         clickWorkItem?.cancel()
         environmentWorkItem?.cancel()
         environmentDetectionGeneration &+= 1
+        let cancelledFollowUp = interactionMode.isFollowUp
+            || followUpOriginAction != nil
+            || activeCrossExaminationToken != nil
         cancelFollowUp(returnToIdle: false)
         let pointInPetView = convert(event.locationInWindow, from: nil)
         activeGrabRegion = imageView.image.flatMap { image in
@@ -427,6 +611,9 @@ final class PetView: NSView {
 
         guard activeGrabRegion != nil else {
             didDrag = false
+            if cancelledFollowUp {
+                showIdle()
+            }
             return
         }
 
@@ -522,8 +709,10 @@ final class PetView: NSView {
         }
 
         let workItem = DispatchWorkItem { [weak self] in
-            guard let action = PetAction.interactiveActions.randomElement() else { return }
-            self?.perform(action, countAsInteraction: true)
+            guard let self, let action = self.interactiveActionBag.next(
+                from: PetAction.interactiveActions
+            ) else { return }
+            self.perform(action, countAsInteraction: true)
         }
         clickWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: workItem)
@@ -569,6 +758,22 @@ final class PetView: NSView {
         helpItem.target = self
         menu.addItem(helpItem)
 
+        let crossExaminationItem = NSMenuItem(
+            title: "开始交叉询问",
+            action: #selector(startCrossExaminationFromMenu),
+            keyEquivalent: ""
+        )
+        crossExaminationItem.target = self
+        menu.addItem(crossExaminationItem)
+
+        let companionItem = NSMenuItem(
+            title: "陪伴节奏",
+            action: nil,
+            keyEquivalent: ""
+        )
+        companionItem.submenu = makeCompanionActivityMenu()
+        menu.addItem(companionItem)
+
         menu.addItem(.separator())
         let courtRecordItem = NSMenuItem(
             title: "法庭记录…",
@@ -611,7 +816,10 @@ final class PetView: NSView {
         quitItem.target = self
         menu.addItem(quitItem)
 
+        isContextMenuOpen = true
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+        isContextMenuOpen = false
+        presentDeferredAnnouncementsIfPossible()
     }
 
     @objc private func selectActionFromMenu(_ sender: NSMenuItem) {
@@ -625,8 +833,17 @@ final class PetView: NSView {
 
     @objc private func performRandomAction() {
         cancelFollowUp(returnToIdle: false)
-        guard let action = PetAction.interactiveActions.randomElement() else { return }
+        guard let action = interactiveActionBag.next(from: PetAction.interactiveActions) else {
+            return
+        }
         perform(action, countAsInteraction: true)
+    }
+
+    @objc private func startCrossExaminationFromMenu() {
+        cancelFollowUp(returnToIdle: true)
+        cancelTrackedAccessoryCollection()
+        accessoryScatterController.cancelAndRemoveAll()
+        beginCrossExamination()
     }
 
     @objc private func showHelp() {
@@ -634,6 +851,84 @@ final class PetView: NSView {
         showIdle()
         noteExplicitInteraction()
         showTemporaryMessage("单击随机 · 双击异议 · 拖动搬家", duration: 3.5)
+    }
+
+    private func makeCompanionActivityMenu() -> NSMenu {
+        let menu = NSMenu(title: "陪伴节奏")
+        let snapshot = companionActivityPolicy.resolve()
+        let titles: [(CompanionActivityLevel, String)] = [
+            (.focused, "专注（无自动动作）"),
+            (.balanced, "轻陪伴"),
+            (.lively, "活跃"),
+        ]
+        for (level, title) in titles {
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(selectCompanionActivityLevel(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = level.rawValue
+            item.state = snapshot.baseLevel == level ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        if let quietUntil = snapshot.quietUntil {
+            let remainingMinutes = max(
+                1,
+                Int(ceil(quietUntil.timeIntervalSinceNow / 60))
+            )
+            let cancelItem = NSMenuItem(
+                title: "取消安静（剩余约 \(remainingMinutes) 分钟）",
+                action: #selector(cancelTemporaryQuiet),
+                keyEquivalent: ""
+            )
+            cancelItem.target = self
+            menu.addItem(cancelItem)
+        } else {
+            let quietItem = NSMenuItem(
+                title: "安静 30 分钟",
+                action: #selector(beginTemporaryQuiet),
+                keyEquivalent: ""
+            )
+            quietItem.target = self
+            menu.addItem(quietItem)
+        }
+        return menu
+    }
+
+    @objc private func selectCompanionActivityLevel(_ sender: NSMenuItem) {
+        guard
+            let rawValue = sender.representedObject as? String,
+            let level = CompanionActivityLevel(rawValue: rawValue)
+        else { return }
+
+        noteExplicitInteraction()
+        companionActivityPolicy.setBaseLevel(level)
+        applyCompanionActivityPolicy()
+        let title: String
+        switch level {
+        case .focused: title = "已切换为专注：不再自动演出。"
+        case .balanced: title = "已切换为轻陪伴。"
+        case .lively: title = "已切换为活跃陪伴。"
+        }
+        showTemporaryMessage(title, duration: 2.6)
+    }
+
+    @objc private func beginTemporaryQuiet() {
+        noteExplicitInteraction()
+        _ = companionActivityPolicy.beginQuiet()
+        applyCompanionActivityPolicy()
+        cancelFollowUp(returnToIdle: true)
+        showTemporaryMessage("好，30 分钟内我会安静待着。", duration: 2.8)
+    }
+
+    @objc private func cancelTemporaryQuiet() {
+        noteExplicitInteraction()
+        companionActivityPolicy.cancelQuiet()
+        applyCompanionActivityPolicy()
+        showTemporaryMessage("安静模式已结束。", duration: 2.2)
     }
 
     @objc private func toggleChatNameListener() {
@@ -779,6 +1074,7 @@ final class PetView: NSView {
                 previewID: previewID,
                 belongsToControllerSession: true
             )
+            cancelTrackedAccessoryCollection()
             controller.cancelAndRemoveAll()
             return
         }
@@ -823,6 +1119,7 @@ final class PetView: NSView {
                 belongsToControllerSession: stillOwnsControllerSession
             )
             if stillOwnsControllerSession {
+                self.cancelTrackedAccessoryCollection()
                 controller.cancelAndRemoveAll()
             }
         }
@@ -865,6 +1162,7 @@ final class PetView: NSView {
         accessoryPreviewSessionIsCurrent = nil
         accessoryPreviewSessionIsCurrentOrFinished = nil
         if removeAccessories, hadControllerSession, belongsToControllerSession {
+            cancelTrackedAccessoryCollection()
             accessoryScatterController.cancelAndRemoveAll()
         }
         if shouldRestore {
@@ -912,7 +1210,7 @@ final class PetView: NSView {
         }
         edgeMotionEffectView.stop()
         resetWorkItem?.cancel()
-        bubbleWorkItem?.cancel()
+        cancelTemporaryMessage()
         let nextMode = mode ?? (action == .objection ? .objectionBurst : .action)
         transition(to: nextMode)
         currentAction = action
@@ -964,6 +1262,7 @@ final class PetView: NSView {
 
     private func showIdle(mode: PetInteractionMode = .ordinary) {
         resetWorkItem?.cancel()
+        cancelTemporaryMessage()
         transition(to: mode)
         currentAction = .idle
         imageView.image = images[.idle]
@@ -972,17 +1271,40 @@ final class PetView: NSView {
         dialogueController.dismiss()
         edgeMotionEffectView.stop()
         animate(.idle)
+        presentDeferredAnnouncementsIfPossible()
     }
 
     private func noteExplicitInteraction() {
+        suspendCourtRecordUnlockAnnouncements()
+        accessoryCompletionRewardWorkItem?.cancel()
+        accessoryCompletionRewardWorkItem = nil
         cancelAccessoryPreview(restoreIfOwned: true, removeAccessories: false)
         lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
         edgeIdleBehavior.resetCandidate()
         idleScheduler?.noteUserInteraction()
     }
 
+    private func applyCompanionActivityPolicy() {
+        companionModeExpirationWorkItem?.cancel()
+        companionModeExpirationWorkItem = nil
+
+        let snapshot = companionActivityPolicy.resolve()
+        idleScheduler?.refreshProfile()
+        guard let quietUntil = snapshot.quietUntil else { return }
+
+        let delay = max(0, quietUntil.timeIntervalSinceNow)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.companionModeExpirationWorkItem = nil
+            self.applyCompanionActivityPolicy()
+        }
+        companionModeExpirationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
     private func performScheduledIdleOpportunity() {
         guard
+            companionActivityPolicy.allows(.ambient),
             interactionMode == .ordinary,
             currentAction == .idle,
             !didDrag
@@ -1002,7 +1324,9 @@ final class PetView: NSView {
             return
         }
 
-        guard let action = PetAction.lowFrequencyIdleActions.randomElement() else { return }
+        guard let action = idleActionBag.next(from: PetAction.lowFrequencyIdleActions) else {
+            return
+        }
         performAmbientIdleAction(action)
     }
 
@@ -1139,26 +1463,16 @@ final class PetView: NSView {
         guard interactionMode == .followUpChoosing else { return }
         followUpExpirationWorkItem?.cancel()
         followUpChoiceView.isHidden = true
-        transition(to: .followUpBranch)
         noteExplicitInteraction()
 
-        switch branch {
-        case .askAboutCase:
-            perform(
-                .evidence,
-                autoReset: false,
-                messageOverride: "先锁定证言里最不自然的那一句。",
-                mode: .followUpBranch
-            )
-            scheduleFollowUpStep(after: 5.2) { [weak self] in
-                self?.perform(
-                    .decisiveEvidence,
-                    autoReset: false,
-                    messageOverride: "观察条件对不上——突破口就在这里。",
-                    mode: .followUpBranch
-                )
-            }
+        if case .askAboutCase = branch {
+            beginCrossExamination()
+            return
+        }
 
+        transition(to: .followUpBranch)
+
+        switch branch {
         case .presentBadge:
             perform(
                 .badgeToss,
@@ -1174,11 +1488,166 @@ final class PetView: NSView {
                     mode: .followUpBranch
                 )
             }
+        case .askAboutCase:
+            break
         }
 
         scheduleFollowUpStep(after: 11.4) { [weak self] in
             self?.cancelFollowUp(returnToIdle: true)
         }
+    }
+
+    private func beginCrossExamination() {
+        followUpExpirationWorkItem?.cancel()
+        followUpExpirationWorkItem = nil
+        followUpSequenceWorkItems.forEach { $0.cancel() }
+        followUpSequenceWorkItems.removeAll()
+        cancelCrossExaminationState()
+        noteExplicitInteraction()
+
+        guard let question = crossExaminationQuestionBag.next() else {
+            showIdle()
+            return
+        }
+
+        followUpOriginAction = .evidence
+        transition(to: .followUpBranch)
+        let token = crossExaminationRound.start(question: question)
+        activeCrossExaminationToken = token
+        presentCurrentCrossExaminationStatement()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.timeoutCrossExamination(sessionToken: token)
+        }
+        followUpExpirationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15.0, execute: workItem)
+    }
+
+    private func presentCurrentCrossExaminationStatement(feedback: String? = nil) {
+        guard
+            let token = activeCrossExaminationToken,
+            let snapshot = crossExaminationRound.snapshot,
+            snapshot.sessionToken == token,
+            snapshot.phase == .active
+        else { return }
+
+        crossExaminationView.isHidden = false
+        crossExaminationView.update(
+            positionText: "第 \(snapshot.currentIndex + 1) 句",
+            canPrevious: snapshot.currentIndex > 0,
+            canNext: snapshot.currentIndex + 1 < snapshot.question.statements.count,
+            feedback: feedback
+        )
+        perform(
+            .think,
+            autoReset: false,
+            messageOverride: "证言 \(snapshot.currentIndex + 1)/3：\(snapshot.currentStatement)",
+            mode: .followUpBranch,
+            recordsInCourtRecord: false
+        )
+    }
+
+    private func navigateCrossExamination(previous: Bool) {
+        guard let token = activeCrossExaminationToken else { return }
+        noteExplicitInteraction()
+        crossExaminationFeedbackWorkItem?.cancel()
+        crossExaminationFeedbackWorkItem = nil
+        if previous {
+            _ = crossExaminationRound.previous(sessionToken: token)
+        } else {
+            _ = crossExaminationRound.next(sessionToken: token)
+        }
+        presentCurrentCrossExaminationStatement()
+    }
+
+    private func objectDuringCrossExamination() {
+        guard let token = activeCrossExaminationToken else { return }
+        noteExplicitInteraction()
+        crossExaminationFeedbackWorkItem?.cancel()
+        crossExaminationFeedbackWorkItem = nil
+
+        switch crossExaminationRound.object(sessionToken: token) {
+        case let .incorrect(_, hint):
+            let currentIndex = crossExaminationRound.snapshot?.currentIndex ?? 0
+            crossExaminationView.update(
+                positionText: "再看看",
+                canPrevious: currentIndex > 0,
+                canNext: currentIndex < 2,
+                feedback: "再看看"
+            )
+            perform(
+                .sweat,
+                autoReset: false,
+                messageOverride: hint,
+                mode: .followUpBranch,
+                recordsInCourtRecord: false
+            )
+            let workItem = DispatchWorkItem { [weak self] in
+                guard self?.activeCrossExaminationToken == token else { return }
+                self?.crossExaminationFeedbackWorkItem = nil
+                self?.presentCurrentCrossExaminationStatement()
+            }
+            crossExaminationFeedbackWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
+
+        case let .succeeded(conclusion):
+            followUpExpirationWorkItem?.cancel()
+            followUpExpirationWorkItem = nil
+            activeCrossExaminationToken = nil
+            crossExaminationView.isHidden = true
+            courtRecordStore.record(CourtRecordID.crossExamination)
+            perform(
+                .objection,
+                autoReset: false,
+                mode: .followUpBranch,
+                recordsInCourtRecord: false
+            )
+            scheduleFollowUpStep(after: 1.35) { [weak self] in
+                self?.perform(
+                    .decisiveEvidence,
+                    autoReset: false,
+                    messageOverride: conclusion,
+                    mode: .followUpBranch,
+                    recordsInCourtRecord: false
+                )
+            }
+            scheduleFollowUpStep(after: 4.4) { [weak self] in
+                self?.cancelFollowUp(returnToIdle: true)
+            }
+
+        case .ignored:
+            break
+        }
+    }
+
+    private func timeoutCrossExamination(sessionToken: CrossExaminationSessionToken) {
+        guard activeCrossExaminationToken == sessionToken else { return }
+        guard crossExaminationRound.timeout(sessionToken: sessionToken) == .timedOut else {
+            return
+        }
+        followUpExpirationWorkItem = nil
+        activeCrossExaminationToken = nil
+        crossExaminationView.isHidden = true
+        perform(
+            .think,
+            autoReset: false,
+            messageOverride: "这句证言先记下来，下次再找矛盾。",
+            mode: .followUpBranch,
+            recordsInCourtRecord: false
+        )
+        scheduleFollowUpStep(after: 2.6) { [weak self] in
+            self?.cancelFollowUp(returnToIdle: true)
+        }
+    }
+
+    private func cancelCrossExaminationState() {
+        crossExaminationFeedbackWorkItem?.cancel()
+        crossExaminationFeedbackWorkItem = nil
+        if let token = activeCrossExaminationToken {
+            _ = crossExaminationRound.cancel(sessionToken: token)
+        }
+        activeCrossExaminationToken = nil
+        crossExaminationView.isHidden = true
     }
 
     private func scheduleFollowUpStep(
@@ -1191,11 +1660,14 @@ final class PetView: NSView {
     }
 
     private func cancelFollowUp(returnToIdle: Bool) {
-        let hadFollowUp = interactionMode.isFollowUp || followUpOriginAction != nil
+        let hadFollowUp = interactionMode.isFollowUp
+            || followUpOriginAction != nil
+            || activeCrossExaminationToken != nil
         followUpExpirationWorkItem?.cancel()
         followUpExpirationWorkItem = nil
         followUpSequenceWorkItems.forEach { $0.cancel() }
         followUpSequenceWorkItems.removeAll()
+        cancelCrossExaminationState()
         followUpOriginAction = nil
         followUpHotspotView.isHidden = true
         followUpChoiceView.isHidden = true
@@ -1213,6 +1685,9 @@ final class PetView: NSView {
     }
 
     private func transition(to mode: PetInteractionMode) {
+        if mode != .ordinary {
+            suspendCourtRecordUnlockAnnouncements()
+        }
         interactionMode = mode
         if mode != .followUpPending {
             followUpHotspotView.isHidden = true
@@ -1457,7 +1932,6 @@ final class PetView: NSView {
                 background.isDark
             else { return }
 
-            self.courtRecordStore.record(CourtRecordID.darkPlace)
             self.perform(.afraidDark, autoReset: false, countAsInteraction: true)
             let workItem = DispatchWorkItem { [weak self] in
                 guard
@@ -1466,15 +1940,141 @@ final class PetView: NSView {
                     !self.didDrag,
                     self.currentAction == .afraidDark
                 else { return }
-                self.perform(.flashlight)
+                self.perform(.flashlight, recordsInCourtRecord: false)
             }
             self.environmentWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.7, execute: workItem)
         }
     }
 
+    private func enqueueCourtRecordUnlock(recordID: String) {
+        guard CourtRecordCatalog.all.contains(where: { $0.id == recordID }) else { return }
+        if case .activated = courtRecordUnlockQueue.enqueue(recordID: recordID) {
+            presentPendingCourtRecordUnlockIfPossible()
+        }
+    }
+
+    private func presentPendingCourtRecordUnlockIfPossible() {
+        guard
+            pendingAccessoryCompletionReward == nil,
+            bubbleWorkItem == nil,
+            !isContextMenuOpen,
+            presentedCourtRecordUnlock == nil,
+            let announcement = courtRecordUnlockQueue.active,
+            throwPhysicsController?.isRunning != true,
+            !didDrag
+        else { return }
+
+        switch interactionMode {
+        case .ordinary:
+            break
+        case .action, .mousePressed, .dragging, .objectionBurst, .followUpPending,
+             .followUpChoosing, .followUpBranch, .courtRecordPanel:
+            return
+        }
+
+        guard let definition = CourtRecordCatalog.all.first(where: {
+            $0.id == announcement.recordID
+        }) else {
+            _ = courtRecordUnlockQueue.complete(announcement)
+            presentPendingCourtRecordUnlockIfPossible()
+            return
+        }
+
+        presentedCourtRecordUnlock = announcement
+        courtRecordUnlockToastView.show(recordTitle: definition.title)
+        courtRecordUnlockWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.presentedCourtRecordUnlock == announcement else { return }
+            self.courtRecordUnlockToastView.hide()
+            self.presentedCourtRecordUnlock = nil
+            _ = self.courtRecordUnlockQueue.complete(announcement)
+            self.presentPendingCourtRecordUnlockIfPossible()
+        }
+        courtRecordUnlockWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    /// Explicit interaction interrupts the visual toast, but keeps its one-shot
+    /// announcement queued so it can be shown again after the pet returns idle.
+    private func suspendCourtRecordUnlockAnnouncements() {
+        courtRecordUnlockWorkItem?.cancel()
+        courtRecordUnlockWorkItem = nil
+        presentedCourtRecordUnlock = nil
+        courtRecordUnlockToastView.hide()
+    }
+
+    private func scheduleAccessoryCollectionReward(_ reward: AccessoryCompletionReward) {
+        accessoryCompletionRewardWorkItem?.cancel()
+        accessoryCompletionRewardWorkItem = nil
+        pendingAccessoryCompletionReward = reward
+        presentPendingAccessoryCollectionRewardIfPossible()
+    }
+
+    private func presentPendingAccessoryCollectionRewardIfPossible() {
+        guard
+            pendingAccessoryCompletionReward != nil,
+            accessoryCompletionRewardWorkItem == nil,
+            bubbleWorkItem == nil,
+            !isContextMenuOpen,
+            currentAction == .idle,
+            interactionMode == .ordinary,
+            throwPhysicsController?.isRunning != true,
+            !didDrag
+        else { return }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.accessoryCompletionRewardWorkItem = nil
+            guard
+                let reward = self.pendingAccessoryCompletionReward,
+                self.bubbleWorkItem == nil,
+                !self.isContextMenuOpen,
+                self.currentAction == .idle,
+                self.interactionMode == .ordinary,
+                self.throwPhysicsController?.isRunning != true,
+                !self.didDrag
+            else { return }
+            self.pendingAccessoryCompletionReward = nil
+            self.perform(
+                .decisiveEvidence,
+                messageOverride: reward.message
+            )
+        }
+        accessoryCompletionRewardWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
+    }
+
+    private func presentDeferredAnnouncementsIfPossible() {
+        guard
+            bubbleWorkItem == nil,
+            !isContextMenuOpen,
+            currentAction == .idle,
+            interactionMode == .ordinary,
+            !didDrag
+        else { return }
+
+        if pendingAccessoryCompletionReward != nil {
+            presentPendingAccessoryCollectionRewardIfPossible()
+        } else {
+            presentPendingCourtRecordUnlockIfPossible()
+        }
+    }
+
+    private func cancelTrackedAccessoryCollection() {
+        if let sessionID = accessoryCollectionProgress.activeSessionID {
+            _ = accessoryCollectionProgress.cancel(sessionID: sessionID)
+        }
+        if let sessionID = orderedEvidenceArchive.activeSessionID {
+            _ = orderedEvidenceArchive.cancel(sessionID: sessionID)
+        }
+        orderedEvidenceArchiveHUDView.hide()
+    }
+
     private func showTemporaryMessage(_ text: String, duration: TimeInterval) {
-        bubbleWorkItem?.cancel()
+        cancelTemporaryMessage()
+        let generation = temporaryMessageGeneration
+        suspendCourtRecordUnlockAnnouncements()
         bubbleView.hide()
         dialogueController.show(
             text: text,
@@ -1483,10 +2083,22 @@ final class PetView: NSView {
             duration: duration
         )
         let workItem = DispatchWorkItem { [weak self] in
-            self?.dialogueController.dismiss()
+            guard
+                let self,
+                self.temporaryMessageGeneration == generation
+            else { return }
+            self.bubbleWorkItem = nil
+            self.dialogueController.dismiss()
+            self.presentDeferredAnnouncementsIfPossible()
         }
         bubbleWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: workItem)
+    }
+
+    private func cancelTemporaryMessage() {
+        bubbleWorkItem?.cancel()
+        bubbleWorkItem = nil
+        temporaryMessageGeneration &+= 1
     }
 
     private func dialogueStyle(for action: PetAction) -> DialogueStyle {
