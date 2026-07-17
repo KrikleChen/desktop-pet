@@ -10,7 +10,7 @@ import {
 
 const ACTIONS = Object.freeze({
   idle: action("idle", "", 0),
-  think: action("think", "唔……先把线索理清楚。", 2_400, "pop", "action.think"),
+  think: action("think", "唏……真相只有一个。", 2_400, "pop", "action.think"),
   objection: action("objection", "异议！", 2_000, "shake", "action.objection"),
   slam: action("slam", "等一下！", 1_800, "impact", "action.slam"),
   sweat: action("sweat", "糟了……", 2_100, "shake", "action.sweat"),
@@ -27,7 +27,7 @@ const ACTIONS = Object.freeze({
   impact: action("impact", "痛！", 0, "impact"),
   dizzy: action("dizzy", "天地都在转……", 2_200, "shake"),
   "held-struggle": action("held-struggle", "放、放我下来！", 0, "shake"),
-  "leg-struggle": action("leg-struggle", "等一下！我的证物都掉出来了！", 0, "shake"),
+  "leg-struggle": action("leg-struggle", "为什么偏偏拽脚啊！", 0, "shake"),
 });
 
 const INTERACTIVE_ACTIONS = [
@@ -122,7 +122,7 @@ const toastQueue = [];
 await preloadAssets();
 wireInteractions();
 showIdle();
-showTemporaryMessage("单击随机动作 · 双击异议 · 拖动搬家 · 右键更多", 4_200);
+showTemporaryMessage("单击随机动作 · 双击异议 · 右键菜单", 4_000);
 scheduleIdle();
 scheduleQuietExpiry();
 window.desktopPet.rendererReady();
@@ -591,7 +591,7 @@ function showNextToast() {
   if (currentAction !== "idle" || crossToken || pendingAccessoryReward) return;
   if (!currentToast) currentToast = toastQueue.shift();
   if (!currentToast) return;
-  dom.toast.textContent = `新记录：${currentToast}`;
+  dom.toast.textContent = `★ 新记录：${currentToast}`;
   dom.toast.classList.remove("hidden");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
