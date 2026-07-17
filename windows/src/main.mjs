@@ -7,6 +7,7 @@ import {
   accessoryPathPosition,
   easedProgress,
 } from "./shared/accessory-motion.mjs";
+import { stepAccessoryPhysics } from "./shared/accessory-scatter.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = path.join(moduleDirectory, "renderer");
@@ -20,6 +21,14 @@ const accessoryKinds = [
   "pen",
   "sticky-note",
 ];
+const accessoryAssetNames = {
+  "attorney-badge": "scatter-attorney-badge-cg.png",
+  "case-file": "scatter-case-file-cg.png",
+  magatama: "scatter-magatama-cg.png",
+  evidence: "scatter-evidence-cg.png",
+  pen: "scatter-pen-cg.png",
+  "sticky-note": "scatter-notes-cg.png",
+};
 
 let petWindow;
 let courtRecordWindow;
@@ -28,7 +37,8 @@ let dragState;
 let throwTimer;
 let accessorySequence = 0;
 let activeAccessorySession;
-let accessoryTimeout;
+let accessoryPhysicsTimer;
+let lastAccessoryPhysicsTime;
 let accessoryWindows = new Map();
 let reclaimedAccessories = new Set();
 let rendererReady = false;
@@ -326,16 +336,31 @@ function scatterAccessories() {
   reclaimedAccessories = new Set();
   const sessionId = activeAccessorySession;
   const area = screen.getDisplayMatching(petWindow.getBounds()).workArea;
-  const positions = accessoryPositions(area, petWindow.getBounds(), accessoryKinds.length);
+  const petBounds = petWindow.getBounds();
 
   sendToPet("accessory-event", { type: "started", sessionId, kinds: accessoryKinds });
-  accessoryKinds.forEach((kind, index) => {
-    const position = positions[index];
+  accessoryKinds.forEach((kind) => {
+    const image = nativeImage.createFromPath(path.join(assetRoot(), accessoryAssetNames[kind]));
+    const imageSize = image.getSize();
+    const longSide = randomBetween(26, 42);
+    const aspect = imageSize.width / Math.max(1, imageSize.height);
+    const width = Math.max(4, Math.round(aspect >= 1 ? longSide : longSide * aspect));
+    const height = Math.max(4, Math.round(aspect >= 1 ? longSide / aspect : longSide));
+    const x = Math.round(clamp(
+      petBounds.x + petBounds.width / 2 + randomBetween(-18, 18),
+      area.x,
+      area.x + area.width - width,
+    ));
+    const y = Math.round(clamp(
+      petBounds.y + petBounds.height / 2 + randomBetween(-22, 12) - height,
+      area.y,
+      area.y + area.height - height,
+    ));
     const window = new BrowserWindow({
-      width: 72,
-      height: 72,
-      x: position.x,
-      y: position.y,
+      width,
+      height,
+      x,
+      y,
       transparent: true,
       frame: false,
       resizable: false,
@@ -354,11 +379,31 @@ function scatterAccessories() {
       },
     });
     const webContentsId = window.webContents.id;
-    const entry = { window, kind, sessionId };
+    const horizontalMagnitude = randomBetween(125, 285);
+    const entry = {
+      window,
+      kind,
+      sessionId,
+      workArea: area,
+      physics: {
+        x,
+        y,
+        width,
+        height,
+        velocityX: horizontalMagnitude * (Math.random() < 0.5 ? -1 : 1),
+        velocityY: -randomBetween(185, 335),
+        restitution: randomBetween(0.34, 0.52),
+        landed: false,
+        restingDuration: 0,
+      },
+      sleeping: false,
+    };
     accessoryWindows.set(webContentsId, entry);
+    window.setIgnoreMouseEvents(true);
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.once("ready-to-show", () => window.showInactive());
     window.on("closed", () => {
+      clearAccessoryEntryTimers(entry);
       destroyAccessoryTrail(entry);
       if (accessoryWindows.delete(webContentsId) && accessoryWindows.size === 0) {
         finishAccessorySession("faded", true);
@@ -368,15 +413,19 @@ function scatterAccessories() {
       query: { kind, sessionId: String(sessionId) },
     });
   });
-
-  accessoryTimeout = setTimeout(() => finishAccessorySession("timeout", true), 15_000);
+  startAccessoryPhysics();
 }
 
 function reclaimAccessory(webContentsId, entry) {
-  if (entry.sessionId !== activeAccessorySession || entry.reclaiming) return;
+  if (entry.sessionId !== activeAccessorySession || entry.reclaiming || !entry.physics?.landed) return;
   const motion = ACCESSORY_MOTIONS[entry.kind];
   if (!motion || entry.window.isDestroyed() || !petWindow || petWindow.isDestroyed()) return;
   entry.reclaiming = true;
+  entry.sleeping = true;
+  clearTimeout(entry.fadeTimer);
+  clearTimeout(entry.fadeDestroyTimer);
+  entry.fadeTimer = undefined;
+  entry.fadeDestroyTimer = undefined;
   reclaimedAccessories.add(entry.kind);
   sendToPet("accessory-event", {
     type: "reclaimed",
@@ -428,8 +477,7 @@ function reclaimAccessory(webContentsId, entry) {
 }
 
 function finishAccessorySession(reason, notify) {
-  if (accessoryTimeout) clearTimeout(accessoryTimeout);
-  accessoryTimeout = undefined;
+  stopAccessoryPhysics();
   const sessionId = activeAccessorySession;
   const reclaimed = [...reclaimedAccessories];
   const entries = [...accessoryWindows.values()];
@@ -437,13 +485,75 @@ function finishAccessorySession(reason, notify) {
   activeAccessorySession = undefined;
   reclaimedAccessories = new Set();
   for (const entry of entries) {
-    if (entry.reclaimTimer) clearInterval(entry.reclaimTimer);
+    clearAccessoryEntryTimers(entry);
     destroyAccessoryTrail(entry);
     if (!entry.window.isDestroyed()) entry.window.destroy();
   }
   if (notify && sessionId !== undefined) {
     sendToPet("accessory-event", { type: "finished", sessionId, reason, reclaimed });
   }
+}
+
+function startAccessoryPhysics() {
+  stopAccessoryPhysics();
+  lastAccessoryPhysicsTime = performance.now();
+  accessoryPhysicsTimer = setInterval(() => {
+    const now = performance.now();
+    const delta = (now - lastAccessoryPhysicsTime) / 1_000;
+    lastAccessoryPhysicsTime = now;
+    let hasMovingItem = false;
+
+    for (const entry of accessoryWindows.values()) {
+      if (entry.reclaiming || entry.sleeping || entry.window.isDestroyed()) continue;
+      hasMovingItem = true;
+      const result = stepAccessoryPhysics(entry.physics, entry.workArea ?? screen.getDisplayMatching(entry.window.getBounds()).workArea, delta);
+      entry.physics = result.state;
+      entry.window.setPosition(Math.round(result.state.x), Math.round(result.state.y), false);
+      if (result.justLanded) entry.window.setIgnoreMouseEvents(false);
+      if (result.sleeping) {
+        entry.sleeping = true;
+        scheduleAccessoryFade(entry);
+      }
+    }
+    if (!hasMovingItem || [...accessoryWindows.values()].every((entry) => entry.sleeping || entry.reclaiming)) {
+      stopAccessoryPhysics();
+    }
+  }, 16);
+  accessoryPhysicsTimer.unref?.();
+}
+
+function stopAccessoryPhysics() {
+  if (accessoryPhysicsTimer) clearInterval(accessoryPhysicsTimer);
+  accessoryPhysicsTimer = undefined;
+  lastAccessoryPhysicsTime = undefined;
+}
+
+function scheduleAccessoryFade(entry) {
+  if (entry.fadeTimer || entry.reclaiming) return;
+  entry.fadeTimer = setTimeout(() => {
+    entry.fadeTimer = undefined;
+    if (entry.reclaiming || entry.window.isDestroyed()
+        || entry.sessionId !== activeAccessorySession) return;
+    entry.window.setIgnoreMouseEvents(true);
+    entry.window.webContents.send("accessory-fade", { kind: entry.kind });
+    entry.fadeDestroyTimer = setTimeout(() => {
+      entry.fadeDestroyTimer = undefined;
+      const webContentsId = entry.window.webContents.id;
+      accessoryWindows.delete(webContentsId);
+      if (!entry.window.isDestroyed()) entry.window.destroy();
+      if (accessoryWindows.size === 0) finishAccessorySession("faded", true);
+    }, 650);
+  }, randomBetween(8_000, 12_000));
+  entry.fadeTimer.unref?.();
+}
+
+function clearAccessoryEntryTimers(entry) {
+  if (entry.reclaimTimer) clearInterval(entry.reclaimTimer);
+  clearTimeout(entry.fadeTimer);
+  clearTimeout(entry.fadeDestroyTimer);
+  entry.reclaimTimer = undefined;
+  entry.fadeTimer = undefined;
+  entry.fadeDestroyTimer = undefined;
 }
 
 function createAccessoryTrailWindow(entry, area) {
@@ -580,21 +690,6 @@ function stopThrow() {
   throwTimer = undefined;
 }
 
-function accessoryPositions(area, petBounds, count) {
-  const points = [
-    [0.16, 0.22], [0.42, 0.14], [0.70, 0.24],
-    [0.22, 0.62], [0.52, 0.72], [0.80, 0.58],
-  ];
-  return points.slice(0, count).map(([xRatio, yRatio], index) => {
-    let x = Math.round(area.x + xRatio * (area.width - 72));
-    let y = Math.round(area.y + yRatio * (area.height - 72));
-    if (Math.abs(x - petBounds.x) < 110 && Math.abs(y - petBounds.y) < 160) {
-      x = Math.round(area.x + ((xRatio + 0.36 + index * 0.07) % 0.9) * (area.width - 72));
-    }
-    return { x, y };
-  });
-}
-
 function sendToPet(channel, payload) {
   if (petWindow && !petWindow.isDestroyed()) petWindow.webContents.send(channel, payload);
 }
@@ -645,4 +740,8 @@ function validPoint(value) {
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function randomBetween(minimum, maximum) {
+  return minimum + Math.random() * (maximum - minimum);
 }

@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "smoke": "electron . --smoke-test",
-    "test": "node --check src/main.mjs && node --check src/preload.cjs && node --check src/renderer/app.mjs && node --check src/renderer/accessory.mjs && node --check src/renderer/accessory-trail.mjs && node --check src/renderer/court-record.mjs && node --check src/shared/grab-region.mjs && node --check src/shared/accessory-motion.mjs && node --check src/shared/edge-idle.mjs && node --test tests/*.test.mjs",
+    "test": "node --check src/main.mjs && node --check src/preload.cjs && node --check src/renderer/app.mjs && node --check src/renderer/accessory.mjs && node --check src/renderer/accessory-trail.mjs && node --check src/renderer/court-record.mjs && node --check src/shared/grab-region.mjs && node --check src/shared/accessory-motion.mjs && node --check src/shared/accessory-scatter.mjs && node --check src/shared/edge-idle.mjs && node --test tests/*.test.mjs",
     "dist:win": "electron-builder --win nsis --x64"
   },
   "devDependencies": {

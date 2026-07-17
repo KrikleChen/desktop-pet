@@ -38,5 +38,6 @@ if (!assetNames[kind] || !Number.isSafeInteger(sessionId)) {
     button.style.setProperty("--reclaim-duration", `${event.durationMs}ms`);
     button.classList.add("reclaim");
   });
+  window.desktopPet.onAccessoryFade(() => button.classList.add("fade"));
   document.addEventListener("contextmenu", (event) => event.preventDefault());
 }
