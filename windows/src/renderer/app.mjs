@@ -15,11 +15,11 @@ const ACTIONS = Object.freeze({
   slam: action("slam", "等一下！", 1_800, "action-slam", "action.slam"),
   sweat: action("sweat", "糟了……", 2_100, "action-sweat", "action.sweat"),
   evidence: action("evidence", "证据就在这里。", 2_500, "action-evidence", "action.evidence"),
-  "badge-toss": action("badge-toss", "这是我的律师徽章！", 2_200, "action-badge", "easter.badge"),
-  magatama: action("magatama", "你的心里……有锁。", 2_800, "action-magatama", "easter.magatama"),
-  stepladder: action("stepladder", "这明明是人字梯！", 2_800, "action-stepladder", "easter.stepladder"),
-  thinker: action("thinker", "把“思考者”加入证物。", 2_600, "action-thinker", "easter.thinker"),
-  "decisive-evidence": action("decisive-evidence", "找到决定性的证据了！", 2_400, "action-decisive", "easter.decisive"),
+  "badge-toss": action("badge-toss", "这是我的律师徽章！", 2_200, "action-badge", "easter-egg.badge-toss"),
+  magatama: action("magatama", "你的心里……有锁。", 2_800, "action-magatama", "easter-egg.magatama"),
+  stepladder: action("stepladder", "这明明是人字梯！", 2_800, "action-stepladder", "easter-egg.stepladder"),
+  thinker: action("thinker", "把“思考者”加入证物。", 2_600, "action-thinker", "easter-egg.thinker"),
+  "decisive-evidence": action("decisive-evidence", "找到决定性的证据了！", 2_400, "action-decisive", "easter-egg.decisive-evidence"),
   flashlight: action("flashlight", "先把手电打开。", 3_200, "action-flashlight"),
   sleepy: action("sleepy", "就休息五分钟……", 3_000, "action-sleepy"),
   dropped: action("dropped", "下次先打声招呼！", 1_500, "action-dropped"),
@@ -53,21 +53,27 @@ const ACCESSORY_RESPONSES = Object.freeze({
 });
 
 const COURT_CATALOG = Object.freeze([
-  recordDefinition("action.think", "思考案情", "认真梳理过一次线索。"),
-  recordDefinition("action.objection", "异议！", "让响亮的反驳划破了安静。"),
-  recordDefinition("action.slam", "拍桌", "以律师的气势拍下桌面。"),
-  recordDefinition("action.sweat", "紧张冒汗", "见过他措手不及的一面。"),
-  recordDefinition("action.evidence", "查看证物", "请他仔细查看过证物。"),
-  recordDefinition("easter.badge", "律师徽章", "律师身份轻快地登场。"),
-  recordDefinition("easter.magatama", "勾玉与心灵枷锁", "察觉到话语背后的秘密。"),
-  recordDefinition("easter.stepladder", "梯子还是人字梯", "认真争论了工具的准确叫法。"),
-  recordDefinition("easter.thinker", "思考者", "特别的摆设进入了记录。"),
-  recordDefinition("easter.decisive", "决定性证据", "举起了足以改变局面的证据。"),
-  recordDefinition("physics.thrown", "空中的辩护人", "快速拖动后松手，经历一次甩飞。"),
-  recordDefinition("physics.scatter", "散落的法庭记录", "六件随身道具散落在桌面。"),
-  recordDefinition("challenge.full-archive", "完整证据链", "六件证物全部回收归档。"),
-  recordDefinition("challenge.ordered-archive", "完美归档", "六件证物按指定顺序完整归档。"),
-  recordDefinition("challenge.cross-examination", "交叉询问", "从三句证言中找出真正的矛盾。"),
+  recordDefinition("action.think", "经典动作", "!", "思考案情", "认真梳理过一次线索。", "也许安静片刻会有头绪。"),
+  recordDefinition("action.objection", "经典动作", "!", "异议！", "让那句响亮的反驳划破了安静。", "有些矛盾需要被大声指出。"),
+  recordDefinition("action.slam", "经典动作", "!", "拍桌", "以律师的气势拍下了桌面。", "关键时刻，需要一点气势。"),
+  recordDefinition("action.sweat", "经典动作", "!", "紧张冒汗", "见过他措手不及的一面。", "失误有时也会带来新反应。"),
+  recordDefinition("action.evidence", "经典动作", "!", "查看证物", "请他仔细查看过证物。", "真相常藏在纸面细节里。"),
+  recordDefinition("easter-egg.badge-toss", "彩蛋", "★", "甩出律师徽章", "律师身份用一种轻快的方式登场。", "那枚小小的身份象征还会出现。"),
+  recordDefinition("easter-egg.magatama", "彩蛋", "★", "勾玉与心灵枷锁", "察觉到话语背后隐藏的心事。", "秘密不会永远沉默。"),
+  recordDefinition("easter-egg.stepladder", "彩蛋", "★", "梯子还是人字梯", "认真争论了某件工具的准确叫法。", "同一样东西，也可能有两种称呼。"),
+  recordDefinition("easter-egg.thinker", "彩蛋", "★", "出示“思考者”", "一件造型特别的摆设进入了记录。", "某件会报时的摆设值得留意。"),
+  recordDefinition("easter-egg.decisive-evidence", "彩蛋", "★", "决定性证据", "终于举起了足以改变局面的证据。", "继续寻找能让局势翻转的东西。"),
+  recordDefinition("grab.hair/head", "抓取反应", "↕", "发型保卫战", "真的从头发附近把他拎了起来。", "角色身上还有一处不同的抓取反应。"),
+  recordDefinition("grab.arm", "抓取反应", "↕", "律师的手臂", "从手臂附近触发了专属挣扎。", "角色身上还有一处不同的抓取反应。"),
+  recordDefinition("grab.collar/torso", "抓取反应", "↕", "领口悬案", "从领口或躯干处把他提了起来。", "角色身上还有一处不同的抓取反应。"),
+  recordDefinition("grab.leg", "抓取反应", "↕", "倒吊的辩护人", "从腿脚附近触发了完全不同的反应。", "角色身上还有一处不同的抓取反应。"),
+  recordDefinition("environment.dark-place", "环境反应", "☾", "黑暗中的调查", "在真正昏暗的壁纸落点见到了怕黑反应。", "周围环境偶尔也会影响调查。"),
+  recordDefinition("response.heard-name", "名字回应", "♪", "听见呼唤", "聊天输入框里新出现名字时，他作出了回应。", "一声恰当的呼唤也许会被听见。"),
+  recordDefinition("physics.thrown", "桌面互动", "↗", "空中的辩护人", "快速拖动后松手，让他经历了一次完整的甩飞。", "拖动速度也可能改变松手后的结果。"),
+  recordDefinition("physics.upside-down-scatter", "桌面互动", "↗", "散落的法庭记录", "倒吊摇摆时，律师随身的道具散落了一地。", "倒吊以后，试着让他左右摇摆。"),
+  recordDefinition("environment.edge-rest", "环境反应", "☾", "边缘观察", "长时间靠近屏幕边缘时，他停下来观察了周围。", "让他在屏幕边缘安静待上一阵。"),
+  recordDefinition("challenge.cross-examination", "庭审挑战", "◆", "交叉询问", "从三句证言中找出了真正的矛盾。", "右键菜单里，也许能开始一次短暂的庭审。"),
+  recordDefinition("challenge.ordered-evidence-archive", "庭审挑战", "◆", "完美归档", "六件证物按照指定顺序完整归档。", "散落的证物，也有一条严谨的归档顺序。"),
 ]);
 
 const dom = {
@@ -98,7 +104,7 @@ const orderedRound = new OrderedArchiveRound();
 const crossRound = new CrossExaminationRound();
 const shakeDetector = new ShakeDetector();
 const collection = new Set();
-const courtProgress = loadJSON("court-progress", {});
+const courtProgress = migrateCourtProgress(loadJSON("court-progress", {}));
 const savedPolicy = loadJSON("companion-policy", {});
 const companionPolicy = new CompanionPolicy(savedPolicy);
 
@@ -543,7 +549,7 @@ function handleAccessoryEvent(event) {
       collection.clear();
       const snapshot = orderedRound.start(event.sessionId, event.kinds);
       renderOrderedHUD(snapshot);
-      recordCourtEntry("physics.scatter");
+      recordCourtEntry("physics.upside-down-scatter");
       performAction("leg-struggle", { autoReset: false, record: false });
       break;
     }
@@ -570,8 +576,7 @@ function handleAccessoryEvent(event) {
       dom.ordered.className = "ordered-hud hidden";
       dom.ordered.replaceChildren();
       if (allReclaimed) {
-        recordCourtEntry("challenge.full-archive");
-        if (outcome === "ordered") recordCourtEntry("challenge.ordered-archive");
+        if (outcome === "ordered") recordCourtEntry("challenge.ordered-evidence-archive");
         pendingAccessoryReward = outcome === "ordered" ? "ordered" : "standard";
       } else {
         orderedRound.cancel(event.sessionId);
@@ -757,8 +762,27 @@ function action(asset, phrase, duration, animation = "", recordId = undefined) {
   return Object.freeze({ asset, phrase, duration, animation, recordId });
 }
 
-function recordDefinition(id, title, detail) {
-  return Object.freeze({ id, title, detail });
+function recordDefinition(id, category, icon, title, detail, lockedHint) {
+  return Object.freeze({ id, category, icon, title, detail, lockedHint });
+}
+
+function migrateCourtProgress(progress) {
+  const aliases = {
+    "easter.badge": "easter-egg.badge-toss",
+    "easter.magatama": "easter-egg.magatama",
+    "easter.stepladder": "easter-egg.stepladder",
+    "easter.thinker": "easter-egg.thinker",
+    "easter.decisive": "easter-egg.decisive-evidence",
+    "physics.scatter": "physics.upside-down-scatter",
+    "challenge.ordered-archive": "challenge.ordered-evidence-archive",
+  };
+  for (const [legacyID, currentID] of Object.entries(aliases)) {
+    if (progress[legacyID] && !progress[currentID]) progress[currentID] = progress[legacyID];
+    delete progress[legacyID];
+  }
+  delete progress["challenge.full-archive"];
+  localStorage.setItem("court-progress", JSON.stringify(progress));
+  return progress;
 }
 
 function loadJSON(key, fallback) {
