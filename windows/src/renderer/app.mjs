@@ -469,7 +469,7 @@ function presentCrossStatement() {
   if (!snapshot || snapshot.token !== crossToken || snapshot.phase !== "active") return;
   dom.previous.disabled = snapshot.index === 0;
   dom.next.disabled = snapshot.index === 2;
-  dom.object.textContent = `异议 · ${snapshot.index + 1}/3`;
+  dom.object.textContent = `异议 · 第 ${snapshot.index + 1} 句`;
   performAction("think", {
     message: `证言 ${snapshot.index + 1}/3：${snapshot.statement}`,
     autoReset: false,
@@ -492,6 +492,7 @@ function objectDuringCross() {
   clearTimeout(crossFeedbackTimer);
   const result = crossRound.object(crossToken);
   if (result.type === "incorrect") {
+    dom.object.textContent = "再看看";
     performAction("sweat", { message: result.hint, autoReset: false, record: false });
     crossFeedbackTimer = setTimeout(presentCrossStatement, 1_500);
     return;
@@ -510,8 +511,8 @@ function objectDuringCross() {
       autoReset: false,
       record: false,
     });
-  }, 1_250));
-  crossSequenceTimers.push(setTimeout(showIdle, 4_200));
+  }, 1_350));
+  crossSequenceTimers.push(setTimeout(showIdle, 4_400));
 }
 
 function timeoutCross(token) {
@@ -524,7 +525,7 @@ function timeoutCross(token) {
     autoReset: false,
     record: false,
   });
-  crossSequenceTimers.push(setTimeout(showIdle, 2_400));
+  crossSequenceTimers.push(setTimeout(showIdle, 2_600));
 }
 
 function cancelCross(restore) {

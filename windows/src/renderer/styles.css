@@ -339,6 +339,15 @@ button { font: inherit; }
   box-shadow: 0 3px 10px rgb(0 0 0 / 20%);
 }
 
+.cross-controls {
+  left: 18px;
+  width: 224px;
+  height: 35px;
+  border-color: rgb(118 118 128 / 75%);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
 .ordered-hud {
   display: flex;
   align-items: center;
@@ -369,28 +378,29 @@ button { font: inherit; }
 
 .cross-controls {
   display: grid;
-  grid-template-columns: 52px 52px 1fr 28px;
+  grid-template-columns: 49px 49px 1fr 26px;
   gap: 4px;
   padding: 5px;
-  background: rgb(246 246 246 / 95%);
+  background: rgb(246 246 246 / 94%);
 }
 
 .cross-controls button {
   min-width: 0;
-  height: 26px;
+  height: 25px;
   padding: 0 4px;
-  border: 1px solid rgb(84 92 101 / 40%);
-  border-radius: 6px;
+  border: 1px solid rgb(118 118 128 / 76%);
+  border-radius: 5px;
   color: #222b34;
-  background: rgb(255 255 255 / 92%);
-  font-size: 11px;
-  font-weight: 700;
+  background: rgb(255 255 255 / 94%);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
-.cross-controls button:hover:not(:disabled) { background: #e8f2ff; }
+.cross-controls button:hover:not(:disabled) { background: rgb(0 122 255 / 13%); }
 .cross-controls button:active:not(:disabled) { transform: translateY(1px); }
 .cross-controls button:disabled { opacity: .42; }
-.cross-controls .object { color: #8c1616; border-color: rgb(185 35 35 / 55%); }
+.cross-controls .object { border-width: 1.4px; border-color: rgb(255 59 48 / 68%); font-weight: 700; }
+.cross-controls .object:hover:not(:disabled) { background: rgb(255 59 48 / 22%); }
 .cross-controls .close { color: #555; border-radius: 50%; }
 
 @keyframes action-idle {
