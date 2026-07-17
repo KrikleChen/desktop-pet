@@ -21,17 +21,17 @@ button { font: inherit; }
 
 #pet-root {
   position: relative;
-  width: 260px;
-  height: 320px;
+  width: 240px;
+  height: 260px;
   overflow: hidden;
 }
 
 #pet-stage {
   position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 30px;
-  height: 222px;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 180px;
   cursor: grab;
 }
 
@@ -204,10 +204,11 @@ button { font: inherit; }
 .unlock-toast {
   position: absolute;
   z-index: 18;
-  top: 66px;
-  left: 24px;
+  top: 54px;
+  left: 14px;
   width: 212px;
-  padding: 5px 9px;
+  height: 24px;
+  padding: 4px 9px;
   border: 1px solid rgb(210 158 32 / 72%);
   border-radius: 9px;
   color: #fff7d6;
@@ -248,12 +249,12 @@ button { font: inherit; }
     transparent 14.4deg 21.2deg
   );
   -webkit-mask: radial-gradient(
-    ellipse 78px 99px at 50% calc(50% + 2px),
+    circle 76px at 50% calc(50% + 2px),
     transparent 0 98%,
     #000 100%
   );
   mask: radial-gradient(
-    ellipse 78px 99px at 50% calc(50% + 2px),
+    circle 76px at 50% calc(50% + 2px),
     transparent 0 98%,
     #000 100%
   );
@@ -310,7 +311,7 @@ button { font: inherit; }
   width: calc(100% - 26px);
   color: rgb(230 6 3);
   font-family: "Yu Kyokasho", "Yu Mincho Demibold", "Meiryo UI", "Yu Gothic UI", sans-serif;
-  font-size: clamp(34px, 15.5vw, 50px);
+  font-size: 50px;
   font-weight: 900;
   letter-spacing: -3px;
   line-height: 1;
@@ -331,7 +332,7 @@ button { font: inherit; }
   z-index: 25;
   left: 8px;
   bottom: 3px;
-  width: 244px;
+  width: 224px;
   height: 36px;
   border: 1px solid rgb(255 255 255 / 22%);
   border-radius: 9px;
@@ -340,7 +341,7 @@ button { font: inherit; }
 }
 
 .cross-controls {
-  left: 18px;
+  left: 8px;
   width: 224px;
   height: 35px;
   border-color: rgb(118 118 128 / 75%);
@@ -353,7 +354,7 @@ button { font: inherit; }
   align-items: center;
   gap: 3px;
   padding: 4px 5px;
-  left: 18px;
+  left: 8px;
   width: 224px;
   height: 32px;
   border-color: rgb(255 255 255 / 18%);

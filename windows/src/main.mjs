@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = path.join(moduleDirectory, "renderer");
 const preloadPath = path.join(moduleDirectory, "preload.cjs");
-const petSize = { width: 260, height: 320 };
+const petSize = { width: 240, height: 260 };
 const accessoryKinds = [
   "attorney-badge",
   "case-file",
