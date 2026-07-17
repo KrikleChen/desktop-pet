@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, screen } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -26,6 +26,7 @@ let accessoryTimeout;
 let accessoryWindows = new Map();
 let reclaimedAccessories = new Set();
 let rendererReady = false;
+const assetMaskCache = new Map();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -97,10 +98,25 @@ function createPetWindow() {
 function registerIPC() {
   ipcMain.handle("asset-url", (_event, fileName) => {
     if (!/^[a-z0-9-]+-cg\.png$/u.test(fileName)) throw new Error("Invalid asset name");
-    const root = app.isPackaged
-      ? path.join(process.resourcesPath, "assets")
-      : path.resolve(app.getAppPath(), "../Assets");
-    return pathToFileURL(path.join(root, fileName)).href;
+    return pathToFileURL(path.join(assetRoot(), fileName)).href;
+  });
+
+  ipcMain.handle("asset-mask", (event, fileName) => {
+    if (!isPetSender(event) || !/^[a-z0-9-]+-cg\.png$/u.test(fileName)) {
+      throw new Error("Invalid asset mask request");
+    }
+    if (assetMaskCache.has(fileName)) return assetMaskCache.get(fileName);
+    const image = nativeImage.createFromPath(path.join(assetRoot(), fileName));
+    const size = image.getSize();
+    if (image.isEmpty() || size.width < 1 || size.height < 1 || size.width * size.height > 4_194_304) {
+      throw new Error("Invalid asset image");
+    }
+    const bitmap = image.toBitmap();
+    const alpha = new Uint8Array(size.width * size.height);
+    for (let index = 0; index < alpha.length; index += 1) alpha[index] = bitmap[index * 4 + 3];
+    const result = { width: size.width, height: size.height, alpha };
+    assetMaskCache.set(fileName, result);
+    return result;
   });
 
   ipcMain.on("drag-start", (event, point) => {
@@ -120,7 +136,7 @@ function registerIPC() {
   ipcMain.on("drag-end", (event, velocity) => {
     if (!isPetSender(event) || !petWindow) return;
     dragState = undefined;
-    if (!validPoint(velocity) || Math.hypot(velocity.x, velocity.y) < 650) {
+    if (!validPoint(velocity) || Math.hypot(velocity.x, velocity.y) < 720) {
       sendToPet("motion-event", { type: "settled", severity: "light" });
       return;
     }
@@ -450,6 +466,12 @@ function sendToPet(channel, payload) {
 
 function isPetSender(event) {
   return petWindow && !petWindow.isDestroyed() && event.sender.id === petWindow.webContents.id;
+}
+
+function assetRoot() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "assets")
+    : path.resolve(app.getAppPath(), "../Assets");
 }
 
 function isCourtRecordSender(event) {

@@ -8,6 +8,7 @@ import {
   OrderedArchiveRound,
   ShakeDetector,
   ShuffleBag,
+  TeasingMemory,
 } from "../src/shared/game-models.mjs";
 
 test("shuffle bag covers a round and avoids boundary repeats", () => {
@@ -120,6 +121,16 @@ test("shake detector triggers once after alternating travel", () => {
   assert.equal(detector.add(90), false);
   detector.reset();
   assert.equal(detector.add(0), false);
+});
+
+test("teasing memory escalates and expires like macOS", () => {
+  const memory = new TeasingMemory();
+  assert.equal(memory.record("grab", 0), "normal");
+  assert.equal(memory.record("grab", 1_000), "normal");
+  assert.equal(memory.record("legDrag", 2_000), "irritated");
+  assert.equal(memory.record("grab", 3_000), "irritated");
+  assert.equal(memory.record("grab", 4_000), "resigned");
+  assert.equal(memory.stage(22_001), "normal");
 });
 
 function seededRandom(seed) {

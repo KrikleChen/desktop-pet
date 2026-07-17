@@ -317,6 +317,41 @@ export class ShakeDetector {
   }
 }
 
+export class TeasingMemory {
+  constructor({ windowMs = 18_000, irritatedThreshold = 3, resignedThreshold = 5 } = {}) {
+    this.windowMs = windowMs;
+    this.irritatedThreshold = irritatedThreshold;
+    this.resignedThreshold = resignedThreshold;
+    this.events = [];
+  }
+
+  record(interaction, now = performance.now()) {
+    this.#prepare(now);
+    this.events.push({ interaction, now });
+    return this.#stage();
+  }
+
+  stage(now = performance.now()) {
+    this.#prepare(now);
+    return this.#stage();
+  }
+
+  #prepare(now) {
+    if (!Number.isFinite(now)) throw new TypeError("timestamp must be finite");
+    if (this.events.length && now < this.events.at(-1).now) {
+      this.events = [];
+      return;
+    }
+    this.events = this.events.filter((event) => now - event.now <= this.windowMs);
+  }
+
+  #stage() {
+    if (this.events.length >= this.resignedThreshold) return "resigned";
+    if (this.events.length >= this.irritatedThreshold) return "irritated";
+    return "normal";
+  }
+}
+
 function question(id, title, statements, contradictionIndex, conclusion) {
   const value = Object.freeze({ id, title, statements: Object.freeze(statements), contradictionIndex, conclusion });
   validateQuestion(value);

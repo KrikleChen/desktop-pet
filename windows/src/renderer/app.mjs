@@ -6,7 +6,9 @@ import {
   OrderedArchiveRound,
   ShakeDetector,
   ShuffleBag,
+  TeasingMemory,
 } from "../shared/game-models.mjs";
+import { buildCharacterMask, detectGrabRegion } from "../shared/grab-region.mjs";
 
 const ACTIONS = Object.freeze({
   idle: action("idle", "", 0, "action-idle"),
@@ -27,7 +29,13 @@ const ACTIONS = Object.freeze({
   impact: action("impact", "痛！", 0, "action-impact"),
   dizzy: action("dizzy", "天地都在转……", 2_200, "action-dizzy"),
   "held-struggle": action("held-struggle", "放、放我下来！", 0, "action-held"),
+  "held-resigned": action("held-resigned", "……算了，随你吧。", 0, "action-resigned"),
+  "hair-struggle": action("hair-struggle", "头发！别拽头发！", 0, "action-hair"),
+  "hair-resigned": action("hair-resigned", "我的发型……算了。", 0, "action-hair-resigned"),
+  "arm-struggle": action("arm-struggle", "等一下，胳膊要脱臼了！", 0, "action-arm"),
+  "arm-resigned": action("arm-resigned", "……轻一点就好。", 0, "action-arm-resigned"),
   "leg-struggle": action("leg-struggle", "为什么偏偏拽脚啊！", 0, "action-leg"),
+  "leg-resigned": action("leg-resigned", "我已经不想反抗了……", 0, "action-leg-resigned"),
 });
 
 const INTERACTIVE_ACTIONS = [
@@ -108,6 +116,8 @@ const questionBag = new ShuffleBag();
 const orderedRound = new OrderedArchiveRound();
 const crossRound = new CrossExaminationRound();
 const shakeDetector = new ShakeDetector();
+const teasingMemory = new TeasingMemory();
+const grabMaskCache = new Map();
 const collection = new Set();
 const courtProgress = migrateCourtProgress(loadJSON("court-progress", {}));
 const savedPolicy = loadJSON("companion-policy", {});
@@ -123,6 +133,9 @@ let objectionFinishTimer;
 let dialogueExitTimer;
 let dialogueTypeTimer;
 let courtRecordOpen = false;
+let currentGrabMask;
+let activeAsset = "idle";
+let dragResignTimer;
 let pointerState;
 let suppressClickUntil = 0;
 let activeAccessorySession;
@@ -148,6 +161,7 @@ async function preloadAssets() {
   await Promise.all([...names].map(async (name) => {
     assetURLs.set(name, await window.desktopPet.assetUrl(name));
   }));
+  currentGrabMask = await loadGrabMask("idle");
 }
 
 function wireInteractions() {
@@ -177,6 +191,12 @@ function wireInteractions() {
 function beginPointerInteraction(event) {
   if (event.button !== 0) return;
   if (courtRecordOpen) return;
+  const region = detectGrabRegion(
+    currentGrabMask,
+    { x: event.clientX, y: event.clientY },
+    dom.stage.getBoundingClientRect(),
+  );
+  if (!region) return;
   cancelCross(false);
   markInteraction();
   pointerState = {
@@ -184,6 +204,7 @@ function beginPointerInteraction(event) {
     startY: event.screenY,
     samples: [{ x: event.screenX, y: event.screenY, time: performance.now() }],
     dragging: false,
+    region,
   };
   shakeDetector.reset();
   event.preventDefault();
@@ -196,7 +217,7 @@ function continuePointerInteraction(event) {
     pointerState.dragging = true;
     dom.stage.classList.add("dragging");
     window.desktopPet.dragStart(pointerState.startX, pointerState.startY);
-    performAction("held-struggle", { autoReset: false, record: false });
+    beginBeingHeld(pointerState.region);
   }
   if (!pointerState.dragging) return;
 
@@ -204,13 +225,18 @@ function continuePointerInteraction(event) {
   const now = performance.now();
   pointerState.samples.push({ x: event.screenX, y: event.screenY, time: now });
   pointerState.samples = pointerState.samples.filter((sample) => now - sample.time <= 140);
-  if (shakeDetector.add(event.screenX)) window.desktopPet.scatterAccessories();
+  if (pointerState.region === "leg" && shakeDetector.add(event.screenX)) {
+    clearTimeout(dragResignTimer);
+    window.desktopPet.scatterAccessories();
+  }
 }
 
 function endPointerInteraction(event) {
   if (!pointerState || event.button !== 0) return;
   const state = pointerState;
   pointerState = undefined;
+  clearTimeout(dragResignTimer);
+  dragResignTimer = undefined;
   dom.stage.classList.remove("dragging");
 
   if (state.dragging) {
@@ -222,7 +248,7 @@ function endPointerInteraction(event) {
       y: (event.screenY - first.y) / deltaSeconds,
     };
     window.desktopPet.dragEnd(velocity.x, velocity.y);
-    if (Math.hypot(velocity.x, velocity.y) >= 650) {
+    if (Math.hypot(velocity.x, velocity.y) >= 720) {
       performAction("thrown", { autoReset: false });
     } else {
       performAction("dropped");
@@ -242,6 +268,42 @@ function endPointerInteraction(event) {
       performAction(interactiveBag.next(INTERACTIVE_ACTIONS));
     }, 260);
   }
+}
+
+function beginBeingHeld(region) {
+  const actionPair = {
+    "hair/head": ["hair-struggle", "hair-resigned"],
+    arm: ["arm-struggle", "arm-resigned"],
+    "collar/torso": ["held-struggle", "held-resigned"],
+    leg: ["leg-struggle", "leg-resigned"],
+  }[region];
+  if (!actionPair) return;
+
+  recordCourtEntry(`grab.${region}`);
+  const stage = teasingMemory.record(region === "leg" ? "legDrag" : "grab", performance.now());
+  const [struggle, resigned] = actionPair;
+  if (stage === "resigned") {
+    performAction(resigned, {
+      message: "……我就知道你还会来。",
+      autoReset: false,
+      record: false,
+    });
+    return;
+  }
+
+  performAction(struggle, {
+    message: stage === "irritated" ? "又来？！我真的要抗议了！" : undefined,
+    autoReset: false,
+    record: false,
+  });
+  dragResignTimer = setTimeout(() => {
+    if (!pointerState?.dragging) return;
+    performAction(resigned, {
+      message: stage === "irritated" ? "……你到底还要闹几次。" : undefined,
+      autoReset: false,
+      record: false,
+    });
+  }, stage === "irritated" ? 1_400 : 2_200);
 }
 
 function showContextMenu(event) {
@@ -313,7 +375,9 @@ function performAction(name, options = {}) {
   actionTimer = undefined;
   suspendToast();
   currentAction = name;
+  activeAsset = definition.asset;
   dom.image.src = assetURLs.get(`${definition.asset}-cg.png`) ?? "";
+  activateGrabMask(definition.asset);
   dom.image.className = "";
   void dom.image.offsetWidth;
   if (definition.animation) dom.image.classList.add(definition.animation);
@@ -338,7 +402,9 @@ function showIdle() {
   actionTimer = undefined;
   if (crossToken) return;
   currentAction = "idle";
+  activeAsset = "idle";
   dom.image.src = assetURLs.get("idle-cg.png") ?? "";
+  activateGrabMask("idle");
   dom.image.className = ACTIONS.idle.animation;
   hideObjectionBurst();
   hideDialogue();
@@ -426,7 +492,8 @@ function dialogueStyle(actionName) {
   if (actionName === "badge-toss") return "badge";
   if (actionName === "magatama") return "spiritual";
   if (actionName === "flashlight") return "flashlight";
-  if (["held-struggle", "leg-struggle", "thrown"].includes(actionName)) return "drag-protest";
+  if (["held-struggle", "hair-struggle", "arm-struggle", "leg-struggle", "thrown"].includes(actionName)) return "drag-protest";
+  if (["held-resigned", "hair-resigned", "arm-resigned", "leg-resigned"].includes(actionName)) return "resigned";
   if (["dropped", "impact"].includes(actionName)) return "impact";
   return "friendly";
 }
@@ -560,7 +627,11 @@ function handleAccessoryEvent(event) {
       const snapshot = orderedRound.start(event.sessionId, event.kinds);
       renderOrderedHUD(snapshot);
       recordCourtEntry("physics.upside-down-scatter");
-      performAction("leg-struggle", { autoReset: false, record: false });
+      performAction("leg-struggle", {
+        message: "等一下！我的证物都掉出来了！",
+        autoReset: false,
+        record: false,
+      });
       break;
     }
     case "reclaimed": {
@@ -815,4 +886,20 @@ function loadJSON(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+async function loadGrabMask(asset) {
+  if (!grabMaskCache.has(asset)) {
+    grabMaskCache.set(asset, window.desktopPet.assetMask(`${asset}-cg.png`)
+      .then((source) => buildCharacterMask(source))
+      .catch(() => undefined));
+  }
+  return grabMaskCache.get(asset);
+}
+
+function activateGrabMask(asset) {
+  currentGrabMask = undefined;
+  loadGrabMask(asset).then((mask) => {
+    if (activeAsset === asset) currentGrabMask = mask;
+  });
 }

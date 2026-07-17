@@ -53,7 +53,13 @@ button { font: inherit; }
 #pet-image.action-sweat { animation: action-sweat 620ms ease-in-out; }
 #pet-image.action-evidence { animation: action-evidence 720ms ease-in-out; }
 #pet-image.action-held { animation: action-held 420ms ease-in-out infinite; }
+#pet-image.action-resigned { animation: action-resigned 1s ease-in-out infinite alternate; }
+#pet-image.action-hair { animation: action-hair 320ms ease-in-out infinite; }
+#pet-image.action-hair-resigned { animation: action-hair-resigned 1.2s ease-in-out infinite alternate; }
+#pet-image.action-arm { animation: action-arm 480ms ease-in-out infinite; }
+#pet-image.action-arm-resigned { animation: action-arm-resigned 1.05s ease-in-out infinite alternate; }
 #pet-image.action-leg { animation: action-leg 400ms ease-in-out infinite; }
+#pet-image.action-leg-resigned { animation: action-leg-resigned 1.15s ease-in-out infinite alternate; }
 #pet-image.action-flashlight { animation: action-flashlight 700ms ease-in-out; }
 #pet-image.action-sleepy { animation: action-sleepy 1.45s ease-in-out 2; }
 #pet-image.action-dropped { animation: action-dropped 460ms ease-out; }
@@ -475,12 +481,48 @@ button { font: inherit; }
   100% { transform: translateX(0) rotate(0); }
 }
 
+@keyframes action-resigned {
+  from { transform: rotate(-2deg); }
+  to { transform: rotate(2deg); }
+}
+
+@keyframes action-hair {
+  0% { transform: translateY(5px) rotate(-2.58deg); }
+  25% { transform: translateY(-4px) rotate(2.58deg); }
+  50% { transform: translateY(4px) rotate(0); }
+  75% { transform: translateY(-3px) rotate(-2.58deg); }
+  100% { transform: translateY(0) rotate(0); }
+}
+
+@keyframes action-hair-resigned {
+  from { transform: translateY(1px); }
+  to { transform: translateY(-2px); }
+}
+
+@keyframes action-arm {
+  0% { transform: rotate(-7.45deg); }
+  25% { transform: rotate(6.88deg); }
+  50% { transform: rotate(-4.58deg); }
+  75% { transform: rotate(4deg); }
+  100% { transform: rotate(0); }
+}
+
+@keyframes action-arm-resigned {
+  from { transform: rotate(-3.15deg); }
+  to { transform: rotate(3.15deg); }
+}
+
 @keyframes action-leg {
   0% { transform: translateX(-4px) rotate(-5.16deg); }
   25% { transform: translateX(4px) rotate(5.16deg); }
   50% { transform: translateX(-3px) rotate(-3.44deg); }
   75% { transform: translateX(3px) rotate(3.44deg); }
   100% { transform: translateX(0) rotate(0); }
+}
+
+@keyframes action-leg-resigned {
+  from { transform: rotate(-2.29deg); }
+  to { transform: rotate(2.29deg); }
 }
 
 @keyframes action-flashlight {
