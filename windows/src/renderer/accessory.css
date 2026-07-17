@@ -22,7 +22,10 @@ button {
 
 button:hover img { transform: scale(1.08); filter: drop-shadow(0 4px 5px rgb(0 0 0 / 32%)); }
 button:active img { transform: scale(.94); }
-button.reclaim { animation: reclaim 160ms ease-in forwards; pointer-events: none; }
+button.reclaim {
+  animation: reclaim var(--reclaim-duration, 560ms) linear forwards;
+  pointer-events: none;
+}
 
 img {
   width: 64px;
@@ -38,5 +41,20 @@ img {
 }
 
 @keyframes reclaim {
-  to { opacity: 0; transform: translateY(-12px) scale(.48) rotate(14deg); }
+  0%, 72% { opacity: 1; }
+  100% { opacity: 0; }
 }
+
+button.reclaim[data-kind="attorney-badge"] img { animation: reclaim-badge var(--reclaim-duration) linear forwards; }
+button.reclaim[data-kind="case-file"] img { animation: reclaim-file var(--reclaim-duration) linear forwards; }
+button.reclaim[data-kind="magatama"] img { animation: reclaim-magatama var(--reclaim-duration) linear forwards; }
+button.reclaim[data-kind="evidence"] img { animation: reclaim-evidence var(--reclaim-duration) linear forwards; }
+button.reclaim[data-kind="pen"] img { animation: reclaim-pen var(--reclaim-duration) linear forwards; }
+button.reclaim[data-kind="sticky-note"] img { animation: reclaim-note var(--reclaim-duration) linear forwards; }
+
+@keyframes reclaim-badge { to { transform: rotate(259.2deg) scale(.66); } }
+@keyframes reclaim-file { 40% { transform: rotate(-5deg) scale(.94); } 70% { transform: rotate(7deg) scale(.82); } to { transform: rotate(10.8deg) scale(.66); } }
+@keyframes reclaim-magatama { to { transform: rotate(122.4deg) scale(.66); } }
+@keyframes reclaim-evidence { 40% { transform: rotate(6deg) scale(.94); } 70% { transform: rotate(-8deg) scale(.82); } to { transform: rotate(-64.8deg) scale(.66); } }
+@keyframes reclaim-pen { to { transform: rotate(486deg) scale(.66); } }
+@keyframes reclaim-note { 35% { transform: rotate(-11deg) scale(.96); } 68% { transform: rotate(14deg) scale(.83); } to { transform: rotate(21.6deg) scale(.66); } }

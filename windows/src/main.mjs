@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen } from "electron";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ACCESSORY_MOTIONS, accessoryMotionPosition } from "./shared/accessory-motion.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const rendererDirectory = path.join(moduleDirectory, "renderer");
@@ -357,8 +358,10 @@ function scatterAccessories() {
 }
 
 function reclaimAccessory(webContentsId, entry) {
-  if (entry.sessionId !== activeAccessorySession) return;
-  accessoryWindows.delete(webContentsId);
+  if (entry.sessionId !== activeAccessorySession || entry.reclaiming) return;
+  const motion = ACCESSORY_MOTIONS[entry.kind];
+  if (!motion || entry.window.isDestroyed() || !petWindow || petWindow.isDestroyed()) return;
+  entry.reclaiming = true;
   reclaimedAccessories.add(entry.kind);
   sendToPet("accessory-event", {
     type: "reclaimed",
@@ -366,8 +369,44 @@ function reclaimAccessory(webContentsId, entry) {
     kind: entry.kind,
     count: reclaimedAccessories.size,
   });
-  if (!entry.window.isDestroyed()) entry.window.destroy();
-  if (accessoryWindows.size === 0) finishAccessorySession("completed", true);
+  entry.window.setIgnoreMouseEvents(true);
+  entry.window.webContents.send("accessory-reclaim-start", {
+    kind: entry.kind,
+    durationMs: motion.durationMs,
+  });
+
+  const startBounds = entry.window.getBounds();
+  const petBounds = petWindow.getBounds();
+  const area = screen.getDisplayMatching(startBounds).workArea;
+  const start = {
+    x: startBounds.x + startBounds.width / 2,
+    y: startBounds.y + startBounds.height / 2,
+  };
+  const destination = {
+    x: clamp(petBounds.x + petBounds.width / 2 + 28, area.x + startBounds.width / 2, area.x + area.width - startBounds.width / 2),
+    y: clamp(petBounds.y + petBounds.height - 108, area.y + startBounds.height / 2, area.y + area.height - startBounds.height / 2),
+  };
+  const startedAt = performance.now();
+  entry.reclaimTimer = setInterval(() => {
+    if (entry.window.isDestroyed() || entry.sessionId !== activeAccessorySession) {
+      clearInterval(entry.reclaimTimer);
+      entry.reclaimTimer = undefined;
+      return;
+    }
+    const progress = Math.min(1, (performance.now() - startedAt) / motion.durationMs);
+    const point = accessoryMotionPosition(entry.kind, start, destination, progress);
+    const x = clamp(Math.round(point.x - startBounds.width / 2), area.x, area.x + area.width - startBounds.width);
+    const y = clamp(Math.round(point.y - startBounds.height / 2), area.y, area.y + area.height - startBounds.height);
+    entry.window.setPosition(x, y, false);
+    if (progress < 1) return;
+
+    clearInterval(entry.reclaimTimer);
+    entry.reclaimTimer = undefined;
+    accessoryWindows.delete(webContentsId);
+    entry.window.destroy();
+    if (accessoryWindows.size === 0) finishAccessorySession("completed", true);
+  }, 16);
+  entry.reclaimTimer.unref?.();
 }
 
 function finishAccessorySession(reason, notify) {
@@ -375,12 +414,13 @@ function finishAccessorySession(reason, notify) {
   accessoryTimeout = undefined;
   const sessionId = activeAccessorySession;
   const reclaimed = [...reclaimedAccessories];
-  const windows = [...accessoryWindows.values()].map((entry) => entry.window);
+  const entries = [...accessoryWindows.values()];
   accessoryWindows.clear();
   activeAccessorySession = undefined;
   reclaimedAccessories = new Set();
-  for (const window of windows) {
-    if (!window.isDestroyed()) window.destroy();
+  for (const entry of entries) {
+    if (entry.reclaimTimer) clearInterval(entry.reclaimTimer);
+    if (!entry.window.isDestroyed()) entry.window.destroy();
   }
   if (notify && sessionId !== undefined) {
     sendToPet("accessory-event", { type: "finished", sessionId, reason, reclaimed });
@@ -506,4 +546,8 @@ function normalizeCourtRecordPayload(payload) {
 
 function validPoint(value) {
   return Number.isFinite(value?.x) && Number.isFinite(value?.y);
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.max(minimum, Math.min(maximum, value));
 }

@@ -24,12 +24,19 @@ if (!assetNames[kind] || !Number.isSafeInteger(sessionId)) {
   const button = document.querySelector("#accessory");
   const image = document.querySelector("#accessory-image");
   button.setAttribute("aria-label", labels[kind]);
+  button.dataset.kind = kind;
   image.alt = labels[kind];
   image.src = await window.desktopPet.assetUrl(assetNames[kind]);
+  let reclaiming = false;
   button.addEventListener("click", () => {
-    if (button.classList.contains("reclaim")) return;
+    if (reclaiming) return;
+    reclaiming = true;
+    window.desktopPet.reclaimAccessory(sessionId, kind);
+  });
+  window.desktopPet.onAccessoryReclaimStart((event) => {
+    if (event?.kind !== kind || !Number.isFinite(event.durationMs)) return;
+    button.style.setProperty("--reclaim-duration", `${event.durationMs}ms`);
     button.classList.add("reclaim");
-    setTimeout(() => window.desktopPet.reclaimAccessory(sessionId, kind), 120);
   });
   document.addEventListener("contextmenu", (event) => event.preventDefault());
 }

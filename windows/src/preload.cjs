@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("desktopPet", {
   onMenuClosed: (listener) => subscribe("menu-closed", listener),
   onMotionEvent: (listener) => subscribe("motion-event", listener),
   onAccessoryEvent: (listener) => subscribe("accessory-event", listener),
+  onAccessoryReclaimStart: (listener) => subscribe("accessory-reclaim-start", listener),
   onCourtRecordData: (listener) => subscribe("court-record-data", listener),
   onCourtRecordClosed: (listener) => subscribe("court-record-closed", listener),
 });
