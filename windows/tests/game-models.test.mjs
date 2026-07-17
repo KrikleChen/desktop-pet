@@ -82,14 +82,34 @@ test("wrong objection continues and navigation stays bounded", () => {
 test("companion policy respects focused, quiet and expiry", () => {
   const now = 10_000;
   const policy = new CompanionPolicy({ level: "balanced" });
-  assert.equal(policy.ambientProfile(now).enabled, true);
+  assert.deepEqual(policy.ambientProfile(now), {
+    enabled: true,
+    initialMs: 75_000,
+    minimumMs: 120_000,
+    maximumMs: 240_000,
+    probability: 0.65,
+  });
   policy.setLevel("focused");
   assert.equal(policy.ambientProfile(now).enabled, false);
   policy.setLevel("lively");
+  assert.equal(policy.ambientProfile(now).initialMs, 30_000);
   policy.quiet(30, now);
   assert.equal(policy.snapshot(now).effective, "quiet");
   assert.equal(policy.ambientProfile(now).enabled, false);
   assert.equal(policy.snapshot(now + 30 * 60_000 + 1).effective, "lively");
+});
+
+test("companion policy repairs an invalid quiet window to at most 30 minutes", () => {
+  const now = 50_000;
+  const policy = new CompanionPolicy({
+    level: "balanced",
+    quietStartedAt: now + 60_000,
+    quietUntil: now + 90 * 60_000,
+  });
+  const snapshot = policy.snapshot(now);
+  assert.equal(snapshot.quietStartedAt, now);
+  assert.equal(snapshot.quietUntil, now + 30 * 60_000);
+  assert.equal(snapshot.effective, "quiet");
 });
 
 test("shake detector triggers once after alternating travel", () => {

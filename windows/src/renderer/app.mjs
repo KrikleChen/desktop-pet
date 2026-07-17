@@ -139,7 +139,7 @@ await preloadAssets();
 wireInteractions();
 showIdle();
 showTemporaryMessage("单击随机动作 · 双击异议 · 右键菜单", 4_000);
-scheduleIdle();
+scheduleIdle({ reset: true, useInitial: true });
 scheduleQuietExpiry();
 window.desktopPet.rendererReady();
 
@@ -742,12 +742,17 @@ function markInteraction() {
   idleTimer = undefined;
 }
 
-function scheduleIdle() {
+function scheduleIdle({ reset = false, useInitial = false } = {}) {
+  if (idleTimer && !reset) return;
   clearTimeout(idleTimer);
+  idleTimer = undefined;
   const profile = companionPolicy.ambientProfile();
   if (!profile.enabled) return;
-  const delay = profile.minimumMs + Math.random() * (profile.maximumMs - profile.minimumMs);
+  const delay = useInitial
+    ? profile.initialMs
+    : profile.minimumMs + Math.random() * (profile.maximumMs - profile.minimumMs);
   idleTimer = setTimeout(() => {
+    idleTimer = undefined;
     const trulyIdle = currentAction === "idle"
       && !crossToken
       && !courtRecordOpen
@@ -773,7 +778,7 @@ function scheduleQuietExpiry() {
 
 function persistPolicy() {
   localStorage.setItem("companion-policy", JSON.stringify(companionPolicy.snapshot()));
-  scheduleIdle();
+  scheduleIdle({ reset: true, useInitial: true });
 }
 
 function action(asset, phrase, duration, animation = "", recordId = undefined) {

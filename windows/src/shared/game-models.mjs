@@ -222,8 +222,9 @@ export class CrossExaminationRound {
 }
 
 export class CompanionPolicy {
-  constructor({ level = "balanced", quietUntil = 0 } = {}) {
+  constructor({ level = "balanced", quietStartedAt = 0, quietUntil = 0 } = {}) {
     this.level = ["focused", "balanced", "lively"].includes(level) ? level : "balanced";
+    this.quietStartedAt = Number.isFinite(quietStartedAt) ? quietStartedAt : 0;
     this.quietUntil = Number.isFinite(quietUntil) ? quietUntil : 0;
   }
 
@@ -234,17 +235,38 @@ export class CompanionPolicy {
   }
 
   quiet(minutes = 30, now = Date.now()) {
-    this.quietUntil = now + Math.max(1, minutes) * 60_000;
+    const duration = Math.min(30, Math.max(1, minutes)) * 60_000;
+    this.quietStartedAt = now;
+    this.quietUntil = now + duration;
   }
 
   cancelQuiet() {
+    this.quietStartedAt = 0;
     this.quietUntil = 0;
   }
 
   snapshot(now = Date.now()) {
-    if (this.quietUntil <= now) this.quietUntil = 0;
+    if (!Number.isFinite(this.quietUntil) || this.quietUntil <= now) {
+      this.quietStartedAt = 0;
+      this.quietUntil = 0;
+    } else {
+      if (!Number.isFinite(this.quietStartedAt) || this.quietStartedAt <= 0) {
+        this.quietStartedAt = Math.max(now, this.quietUntil - 30 * 60_000);
+      }
+      if (this.quietStartedAt > now) this.quietStartedAt = now;
+      this.quietUntil = Math.min(
+        this.quietUntil,
+        now + 30 * 60_000,
+        this.quietStartedAt + 30 * 60_000,
+      );
+    }
     const effective = this.quietUntil > now ? "quiet" : this.level;
-    return { level: this.level, quietUntil: this.quietUntil, effective };
+    return {
+      level: this.level,
+      quietStartedAt: this.quietStartedAt,
+      quietUntil: this.quietUntil,
+      effective,
+    };
   }
 
   ambientProfile(now = Date.now()) {
@@ -252,11 +274,11 @@ export class CompanionPolicy {
     switch (effective) {
       case "focused":
       case "quiet":
-        return { enabled: false, minimumMs: 0, maximumMs: 0, probability: 0 };
+        return { enabled: false, initialMs: 0, minimumMs: 0, maximumMs: 0, probability: 0 };
       case "lively":
-        return { enabled: true, minimumMs: 45_000, maximumMs: 100_000, probability: 0.9 };
+        return { enabled: true, initialMs: 30_000, minimumMs: 45_000, maximumMs: 100_000, probability: 0.9 };
       default:
-        return { enabled: true, minimumMs: 120_000, maximumMs: 240_000, probability: 0.65 };
+        return { enabled: true, initialMs: 75_000, minimumMs: 120_000, maximumMs: 240_000, probability: 0.65 };
     }
   }
 }
