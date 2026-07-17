@@ -62,6 +62,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 petView.previewEdgeIdle(edge)
             }
         }
+        if launchArguments.contains("--preview-accessory-scatter") {
+            NSLog("桌宠验收预览：道具散落与回收")
+            petView.schedulePreviewAccessoryScatter(after: 5.0)
+        }
+        if let flagIndex = launchArguments.firstIndex(of: "--preview-accessory-reclaim"),
+           launchArguments.indices.contains(flagIndex + 1),
+           let rawValue = Int(launchArguments[flagIndex + 1]),
+            let kind = AccessoryKind(rawValue: rawValue) {
+            NSLog("桌宠验收预览道具回收：%@", kind.displayName)
+            petView.schedulePreviewAccessoryReclaim(kind, after: 5.0)
+        }
 
         NSApp.activate(ignoringOtherApps: false)
     }

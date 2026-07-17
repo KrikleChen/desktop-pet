@@ -1,11 +1,79 @@
 import AppKit
 import QuartzCore
 
+/// 不依赖 AppKit 的预览所有权策略，供隐藏预览生命周期和无 UI 自检共用。
+struct AccessoryPreviewLifecycleState {
+    private(set) var activePreviewID: UInt64?
+    private var nextPreviewID: UInt64 = 0
+
+    mutating func begin() -> UInt64 {
+        nextPreviewID &+= 1
+        if nextPreviewID == 0 {
+            nextPreviewID = 1
+        }
+        activePreviewID = nextPreviewID
+        return nextPreviewID
+    }
+
+    func isCurrent(_ previewID: UInt64) -> Bool {
+        activePreviewID == previewID
+    }
+
+    @discardableResult
+    mutating func cancel(_ previewID: UInt64) -> Bool {
+        guard activePreviewID == previewID else { return false }
+        activePreviewID = nil
+        return true
+    }
+
+    /// 只有预览请求和控制器 session 都匹配时才消费完成事件。
+    /// 返回值仅表示调用方此时可以安全恢复 ordinary/idle。
+    mutating func finish(
+        previewID: UInt64,
+        belongsToControllerSession: Bool,
+        isPreviewDragging: Bool
+    ) -> Bool {
+        consumeIfOwned(
+            previewID: previewID,
+            belongsToControllerSession: belongsToControllerSession,
+            isPreviewDragging: isPreviewDragging
+        )
+    }
+
+    /// 明确交互取消预览时使用同一所有权门闩；只有尚未被用户动作替换的
+    /// 预览拖拽姿态才允许调用方恢复 ordinary/idle。
+    mutating func cancelAndShouldRestore(
+        previewID: UInt64,
+        belongsToControllerSession: Bool,
+        isPreviewDragging: Bool
+    ) -> Bool {
+        consumeIfOwned(
+            previewID: previewID,
+            belongsToControllerSession: belongsToControllerSession,
+            isPreviewDragging: isPreviewDragging
+        )
+    }
+
+    private mutating func consumeIfOwned(
+        previewID: UInt64,
+        belongsToControllerSession: Bool,
+        isPreviewDragging: Bool
+    ) -> Bool {
+        guard
+            activePreviewID == previewID,
+            belongsToControllerSession
+        else { return false }
+        activePreviewID = nil
+        return isPreviewDragging
+    }
+}
+
 final class PetView: NSView {
     private let imageView = NSImageView()
     private let bubbleView = SpeechBubbleView()
     private let objectionBurstView = ObjectionBurstView(frame: .zero)
     private let dialogueController = DialoguePresentationController()
+    private let edgeMotionEffectView = EdgeMotionEffectView(frame: .zero)
     private let followUpHotspotView = FollowUpHotspotView(frame: .zero)
     private let followUpChoiceView = FollowUpChoiceView(frame: .zero)
     private let images: [PetAction: NSImage]
@@ -31,6 +99,8 @@ final class PetView: NSView {
     private var followUpExpirationWorkItem: DispatchWorkItem?
     private var followUpSequenceWorkItems: [DispatchWorkItem] = []
     private var throwRecoveryWorkItems: [DispatchWorkItem] = []
+    private var accessoryPreviewLaunchWorkItem: DispatchWorkItem?
+    private var accessoryPreviewReclaimWorkItem: DispatchWorkItem?
     private var idleScheduler: IdleBehaviorScheduler!
     private var throwPhysicsController: ThrowPhysicsController?
     private var courtRecordPanelController: CourtRecordPanelController?
@@ -43,6 +113,11 @@ final class PetView: NSView {
     private var lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
     private var lastNameListenerStatus: ChatNameListener.Status = .stopped
     private var environmentDetectionGeneration = 0
+    private var accessoryScatterRecordsDiscovery = true
+    private var accessoryPreviewLifecycle = AccessoryPreviewLifecycleState()
+    private var accessoryPreviewReclaimGeneration: UInt64 = 0
+    private var accessoryPreviewSessionIsCurrent: (() -> Bool)?
+    private var accessoryPreviewSessionIsCurrentOrFinished: (() -> Bool)?
 
     private var mouseDownLocation = NSPoint.zero
     private var windowOriginOnMouseDown = NSPoint.zero
@@ -58,6 +133,7 @@ final class PetView: NSView {
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
+        addSubview(edgeMotionEffectView)
         addSubview(imageView)
         addSubview(bubbleView)
         addSubview(followUpHotspotView)
@@ -84,22 +160,48 @@ final class PetView: NSView {
             guard let frame = self?.window?.frame else { return nil }
             return NSPoint(x: frame.midX + 28, y: frame.minY + 108)
         }
-        accessoryScatterController.onAccessoryReclaimed = { [weak self] itemID in
+        accessoryScatterController.onAccessoryReclaimedEvent = { [weak self] event in
             guard let self, !self.didDrag else { return }
             self.cancelFollowUp(returnToIdle: false)
+            let recordsDiscovery = self.accessoryScatterRecordsDiscovery
+            if !recordsDiscovery, self.accessoryPreviewReclaimWorkItem != nil {
+                // 用户先点了预览道具时，取消尚未执行的自动回收，避免稍后再抢画面。
+                self.cancelAccessoryPreviewReclaimTask()
+            }
             let response: (action: PetAction, message: String)
-            switch itemID {
-            case 0:
+            switch event.kind {
+            case .attorneyBadge:
                 response = (.badgeToss, "律师徽章可不能弄丢……接住了！")
-            case 2:
+            case .caseFile:
+                response = (.evidence, "案件资料，一页也不能少。")
+            case .magatama:
                 response = (.magatama, "勾玉也回来了。得好好收着。")
-            default:
-                response = (.evidence, "接住了。证物还是归档比较安全。")
+            case .evidence:
+                response = (.decisiveEvidence, "这份证物很关键，归档。")
+            case .pen:
+                response = (.think, "我的笔！刚才的思路还没记完。")
+            case .stickyNote:
+                response = (.evidence, "便签也要按顺序整理。")
             }
             self.perform(
                 response.action,
                 messageOverride: response.message,
-                countAsInteraction: true
+                countAsInteraction: recordsDiscovery,
+                recordsInCourtRecord: recordsDiscovery
+            )
+        }
+        accessoryScatterController.onFinished = { [weak self] in
+            guard let self else { return }
+            let wasPreview = !self.accessoryScatterRecordsDiscovery
+            self.accessoryScatterRecordsDiscovery = true
+            guard
+                wasPreview,
+                let previewID = self.accessoryPreviewLifecycle.activePreviewID,
+                self.accessoryPreviewSessionIsCurrentOrFinished?() == true
+            else { return }
+            self.finishAccessoryPreview(
+                previewID: previewID,
+                belongsToControllerSession: true
             )
         }
 
@@ -175,9 +277,12 @@ final class PetView: NSView {
         followUpExpirationWorkItem?.cancel()
         followUpSequenceWorkItems.forEach { $0.cancel() }
         throwRecoveryWorkItems.forEach { $0.cancel() }
+        accessoryPreviewLaunchWorkItem?.cancel()
+        accessoryPreviewReclaimWorkItem?.cancel()
         throwPhysicsController?.cancel()
         shakeGestureDetector.cancelCurrentGrab()
         accessoryScatterController.cancelAndRemoveAll()
+        edgeMotionEffectView.stop()
     }
 
     override func viewDidMoveToWindow() {
@@ -267,6 +372,7 @@ final class PetView: NSView {
     override func layout() {
         super.layout()
         // 顶部留出独立字幕区，任何普通台词都不覆盖人物本体。
+        edgeMotionEffectView.frame = bounds
         imageView.frame = NSRect(x: 18, y: 0, width: bounds.width - 36, height: 180)
         bubbleView.frame = NSRect(x: 8, y: bounds.height - 51, width: bounds.width - 16, height: 49)
         followUpHotspotView.frame = NSRect(x: bounds.midX + 31, y: 145, width: 25, height: 25)
@@ -596,13 +702,201 @@ final class PetView: NSView {
 
     /// 仅供本地构建验收时通过启动参数直接预览指定动作。
     func preview(_ action: PetAction) {
+        cancelAccessoryPreview(restoreIfOwned: false, removeAccessories: false)
         NSLog("桌宠执行预览动作：%@", action.rawValue)
-        perform(action)
+        perform(action, recordsInCourtRecord: false)
     }
 
     /// 仅供本地构建验收预览低频边缘待机，不加入用户右键菜单。
     func previewEdgeIdle(_ edge: EdgeIdleBehavior.Edge) {
+        cancelAccessoryPreview(restoreIfOwned: false, removeAccessories: false)
         performEdgeIdle(edge, recordsDiscovery: false)
+    }
+
+    /// 仅供本地构建验收六件道具的散落与回收，不写入图鉴。
+    func previewAccessoryScatter() {
+        scheduleAccessoryPreview(after: 0, reclaimKind: nil)
+    }
+
+    /// 仅供本地构建验收指定道具的独立回收轨迹。
+    func previewAccessoryReclaim(_ kind: AccessoryKind) {
+        scheduleAccessoryPreview(after: 0, reclaimKind: kind)
+    }
+
+    /// 将启动参数触发的隐藏预览延迟也交给 PetView，真实交互可在执行前取消它。
+    func schedulePreviewAccessoryScatter(after delay: TimeInterval) {
+        scheduleAccessoryPreview(after: delay, reclaimKind: nil)
+    }
+
+    /// 将启动参数触发的隐藏预览延迟也交给 PetView，真实交互可在执行前取消它。
+    func schedulePreviewAccessoryReclaim(
+        _ kind: AccessoryKind,
+        after delay: TimeInterval
+    ) {
+        scheduleAccessoryPreview(after: delay, reclaimKind: kind)
+    }
+
+    private func scheduleAccessoryPreview(
+        after delay: TimeInterval,
+        reclaimKind: AccessoryKind?
+    ) {
+        cancelAccessoryPreview(restoreIfOwned: true, removeAccessories: true)
+        let previewID = accessoryPreviewLifecycle.begin()
+
+        guard delay > 0 else {
+            startAccessoryPreview(previewID: previewID, reclaimKind: reclaimKind)
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard
+                let self,
+                self.accessoryPreviewLifecycle.isCurrent(previewID)
+            else { return }
+            self.accessoryPreviewLaunchWorkItem = nil
+            self.startAccessoryPreview(previewID: previewID, reclaimKind: reclaimKind)
+        }
+        accessoryPreviewLaunchWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func startAccessoryPreview(
+        previewID: UInt64,
+        reclaimKind: AccessoryKind?
+    ) {
+        guard accessoryPreviewLifecycle.isCurrent(previewID) else { return }
+        guard triggerAccessoryScatter(recordsDiscovery: false) else {
+            finishAccessoryPreview(
+                previewID: previewID,
+                belongsToControllerSession: true
+            )
+            return
+        }
+
+        let controller = accessoryScatterController
+        guard let sessionID = controller.activeSessionID else {
+            finishAccessoryPreview(
+                previewID: previewID,
+                belongsToControllerSession: true
+            )
+            controller.cancelAndRemoveAll()
+            return
+        }
+
+        accessoryPreviewSessionIsCurrent = { [weak controller] in
+            controller?.activeSessionID == sessionID
+        }
+        accessoryPreviewSessionIsCurrentOrFinished = { [weak controller] in
+            guard let activeSessionID = controller?.activeSessionID else { return true }
+            return activeSessionID == sessionID
+        }
+
+        guard let reclaimKind else { return }
+        cancelAccessoryPreviewReclaimTask()
+        accessoryPreviewReclaimGeneration &+= 1
+        let reclaimGeneration = accessoryPreviewReclaimGeneration
+        let workItem = DispatchWorkItem { [weak self, weak controller] in
+            guard
+                let self,
+                let controller,
+                self.accessoryPreviewLifecycle.isCurrent(previewID),
+                self.accessoryPreviewReclaimGeneration == reclaimGeneration
+            else { return }
+            guard controller.activeSessionID == sessionID else {
+                self.cancelAccessoryPreview(
+                    restoreIfOwned: false,
+                    removeAccessories: false
+                )
+                return
+            }
+
+            self.accessoryPreviewReclaimWorkItem = nil
+            let didReclaim = controller.reclaimForPreview(
+                kind: reclaimKind,
+                sessionID: sessionID
+            )
+            guard !didReclaim else { return }
+
+            let stillOwnsControllerSession = controller.activeSessionID == sessionID
+            self.finishAccessoryPreview(
+                previewID: previewID,
+                belongsToControllerSession: stillOwnsControllerSession
+            )
+            if stillOwnsControllerSession {
+                controller.cancelAndRemoveAll()
+            }
+        }
+        accessoryPreviewReclaimWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4, execute: workItem)
+    }
+
+    private func cancelAccessoryPreviewReclaimTask() {
+        accessoryPreviewReclaimWorkItem?.cancel()
+        accessoryPreviewReclaimWorkItem = nil
+        accessoryPreviewReclaimGeneration &+= 1
+    }
+
+    private func cancelAccessoryPreview(
+        restoreIfOwned: Bool,
+        removeAccessories: Bool
+    ) {
+        accessoryPreviewLaunchWorkItem?.cancel()
+        accessoryPreviewLaunchWorkItem = nil
+        cancelAccessoryPreviewReclaimTask()
+
+        guard let previewID = accessoryPreviewLifecycle.activePreviewID else { return }
+        let hadControllerSession = accessoryPreviewSessionIsCurrent != nil
+        let belongsToControllerSession = accessoryPreviewSessionIsCurrent?() ?? true
+        let shouldRestore: Bool
+        if restoreIfOwned {
+            shouldRestore = accessoryPreviewLifecycle.cancelAndShouldRestore(
+                previewID: previewID,
+                belongsToControllerSession: belongsToControllerSession,
+                isPreviewDragging: isInAccessoryPreviewDraggingState
+            )
+            if !belongsToControllerSession {
+                _ = accessoryPreviewLifecycle.cancel(previewID)
+            }
+        } else {
+            _ = accessoryPreviewLifecycle.cancel(previewID)
+            shouldRestore = false
+        }
+
+        accessoryPreviewSessionIsCurrent = nil
+        accessoryPreviewSessionIsCurrentOrFinished = nil
+        if removeAccessories, hadControllerSession, belongsToControllerSession {
+            accessoryScatterController.cancelAndRemoveAll()
+        }
+        if shouldRestore {
+            showIdle()
+        }
+    }
+
+    private func finishAccessoryPreview(
+        previewID: UInt64,
+        belongsToControllerSession: Bool
+    ) {
+        let shouldRestore = accessoryPreviewLifecycle.finish(
+            previewID: previewID,
+            belongsToControllerSession: belongsToControllerSession,
+            isPreviewDragging: isInAccessoryPreviewDraggingState
+        )
+        guard !accessoryPreviewLifecycle.isCurrent(previewID) else { return }
+
+        accessoryPreviewLaunchWorkItem?.cancel()
+        accessoryPreviewLaunchWorkItem = nil
+        cancelAccessoryPreviewReclaimTask()
+        accessoryPreviewSessionIsCurrent = nil
+        accessoryPreviewSessionIsCurrentOrFinished = nil
+        if shouldRestore {
+            showIdle()
+        }
+    }
+
+    private var isInAccessoryPreviewDraggingState: Bool {
+        interactionMode == .dragging
+            && currentAction == .legStruggle
+            && !didDrag
     }
 
     private func perform(
@@ -616,6 +910,7 @@ final class PetView: NSView {
         if countAsInteraction {
             noteExplicitInteraction()
         }
+        edgeMotionEffectView.stop()
         resetWorkItem?.cancel()
         bubbleWorkItem?.cancel()
         let nextMode = mode ?? (action == .objection ? .objectionBurst : .action)
@@ -675,10 +970,12 @@ final class PetView: NSView {
         objectionBurstView.hide()
         bubbleView.hide()
         dialogueController.dismiss()
+        edgeMotionEffectView.stop()
         animate(.idle)
     }
 
     private func noteExplicitInteraction() {
+        cancelAccessoryPreview(restoreIfOwned: true, removeAccessories: false)
         lastExplicitInteractionTimestamp = ProcessInfo.processInfo.systemUptime
         edgeIdleBehavior.resetCandidate()
         idleScheduler?.noteUserInteraction()
@@ -776,10 +1073,14 @@ final class PetView: NSView {
                 holdFinalValue: true
             )
         }
+        edgeMotionEffectView.playEntrance(edge: edge)
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, !self.didDrag else { return }
-            self.showIdle()
+            self.edgeMotionEffectView.playExit(edge: edge) { [weak self] in
+                guard let self, !self.didDrag else { return }
+                self.showIdle()
+            }
         }
         resetWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 6.0, execute: workItem)
@@ -996,27 +1297,39 @@ final class PetView: NSView {
         }
     }
 
-    private func triggerAccessoryScatter() {
+    @discardableResult
+    private func triggerAccessoryScatter(recordsDiscovery: Bool = true) -> Bool {
+        if recordsDiscovery {
+            cancelAccessoryPreview(restoreIfOwned: false, removeAccessories: false)
+        }
         guard
             !accessoryImages.isEmpty,
             let window,
             let screen = window.screen ?? NSScreen.screens.first
-        else { return }
+        else { return false }
 
+        accessoryScatterRecordsDiscovery = recordsDiscovery
         guard accessoryScatterController.scatter(
             images: accessoryImages,
             from: window.frame,
             on: screen
-        ) else { return }
+        ) else {
+            accessoryScatterRecordsDiscovery = true
+            return false
+        }
 
-        courtRecordStore.record(CourtRecordID.upsideDownScatter)
+        if recordsDiscovery {
+            courtRecordStore.record(CourtRecordID.upsideDownScatter)
+        }
         perform(
             .legStruggle,
             autoReset: false,
             messageOverride: "等一下！我的证物都掉出来了！",
-            countAsInteraction: true,
-            mode: .dragging
+            countAsInteraction: recordsDiscovery,
+            mode: .dragging,
+            recordsInCourtRecord: recordsDiscovery
         )
+        return true
     }
 
     private func rememberStrongestImpact(_ candidate: ThrowPhysicsController.ImpactSeverity) {
