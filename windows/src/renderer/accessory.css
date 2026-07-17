@@ -1,0 +1,42 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+button {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  padding: 4px;
+  place-items: center;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  cursor: pointer;
+  animation: land 420ms cubic-bezier(.2,.8,.25,1.2);
+}
+
+button:hover img { transform: scale(1.08); filter: drop-shadow(0 4px 5px rgb(0 0 0 / 32%)); }
+button:active img { transform: scale(.94); }
+button.reclaim { animation: reclaim 160ms ease-in forwards; pointer-events: none; }
+
+img {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  filter: drop-shadow(0 3px 4px rgb(0 0 0 / 25%));
+  transition: transform 100ms ease, filter 100ms ease;
+}
+
+@keyframes land {
+  from { opacity: 0; transform: translateY(-22px) rotate(-12deg) scale(.7); }
+  to { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+}
+
+@keyframes reclaim {
+  to { opacity: 0; transform: translateY(-12px) scale(.48) rotate(14deg); }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "chengbutang-desktop-pet-windows",
+  "version": "1.0.0",
+  "description": "成步堂桌宠 Windows 版",
+  "private": true,
+  "main": "src/main.mjs",
+  "type": "module",
+  "author": "KrikleChen",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke-test",
+    "test": "node --check src/main.mjs && node --check src/preload.cjs && node --check src/renderer/app.mjs && node --check src/renderer/accessory.mjs && node --test tests/*.test.mjs",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.ymatrix.phoenix-desktop-pet",
+    "productName": "成步堂桌宠",
+    "artifactName": "Chengbutang-Desktop-Pet-${version}-Setup.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../Assets",
+        "to": "assets",
+        "filter": [
+          "*-cg.png"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "成步堂桌宠",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

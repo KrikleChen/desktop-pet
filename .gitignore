@@ -6,6 +6,8 @@
 build/
 .build/
 DerivedData/
+!windows/build/
+!windows/build/icon.ico
 
 # Swift Package Manager local state
 .swiftpm/
@@ -20,3 +22,7 @@ xcuserdata/
 *.log
 *.tmp
 *.temp
+
+# Windows / Electron local output
+windows/node_modules/
+windows/dist/
