@@ -43,6 +43,14 @@ const ACCESSORY_LABELS = Object.freeze({
   pen: "笔",
   "sticky-note": "签",
 });
+const ACCESSORY_DISPLAY_NAMES = Object.freeze({
+  "attorney-badge": "律师徽章",
+  "case-file": "案件文件",
+  magatama: "勾玉",
+  evidence: "证物",
+  pen: "笔",
+  "sticky-note": "便签",
+});
 const ACCESSORY_RESPONSES = Object.freeze({
   "attorney-badge": ["badge-toss", "律师徽章可不能弄丢……接住了！"],
   "case-file": ["evidence", "案件资料，一页也不能少。"],
@@ -597,7 +605,7 @@ function renderOrderedHUD(snapshot) {
     return;
   }
   dom.ordered.className = `ordered-hud ${snapshot.phase}`;
-  dom.ordered.replaceChildren(...snapshot.order.map((kind, index) => {
+  const chips = snapshot.order.map((kind, index) => {
     const chip = document.createElement("span");
     chip.className = "order-chip";
     if (snapshot.phase === "failed") chip.classList.add("failed");
@@ -606,10 +614,22 @@ function renderOrderedHUD(snapshot) {
     chip.textContent = ACCESSORY_LABELS[kind];
     chip.title = kind;
     return chip;
-  }));
+  });
+  const status = document.createElement("span");
+  status.className = "order-status";
+  status.textContent = snapshot.phase === "failed" ? "错序"
+    : snapshot.phase === "completed" ? "完成"
+      : `${snapshot.completedCount}/${snapshot.order.length}`;
+  dom.ordered.replaceChildren(...chips, status);
+  const orderText = snapshot.order.map((kind) => ACCESSORY_DISPLAY_NAMES[kind]).join("、");
+  const description = snapshot.phase === "failed"
+    ? `有序证物归档失败，已完成 ${snapshot.completedCount} 件，顺序：${orderText}`
+    : snapshot.phase === "completed"
+      ? `有序证物归档完成，六件证物顺序：${orderText}`
+      : `有序证物归档，顺序：${orderText}，已完成 ${snapshot.completedCount} 件，下一件：${ACCESSORY_DISPLAY_NAMES[snapshot.next] ?? "无"}`;
   dom.ordered.setAttribute(
     "aria-label",
-    `有序归档，已完成 ${snapshot.completedCount} 件，${snapshot.phase === "active" ? `下一件 ${ACCESSORY_LABELS[snapshot.next]}` : snapshot.phase}`,
+    description,
   );
 }
 
