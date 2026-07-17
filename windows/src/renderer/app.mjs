@@ -104,6 +104,8 @@ let actionTimer;
 let idleTimer;
 let quietTimer;
 let clickTimer;
+let objectionHideTimer;
+let objectionFinishTimer;
 let pointerState;
 let suppressClickUntil = 0;
 let activeAccessorySession;
@@ -293,12 +295,14 @@ function performAction(name, options = {}) {
   void dom.image.offsetWidth;
   if (definition.animation) dom.image.classList.add(definition.animation);
 
-  dom.objection.classList.toggle("hidden", name !== "objection");
   if (name === "objection") {
+    showObjectionBurst();
     hideDialogue();
   } else if (message) {
+    hideObjectionBurst();
     showDialogue(message, name === "decisive-evidence" ? "courtroom" : "");
   } else {
+    hideObjectionBurst();
     hideDialogue();
   }
 
@@ -313,10 +317,34 @@ function showIdle() {
   currentAction = "idle";
   dom.image.src = assetURLs.get("idle-cg.png") ?? "";
   dom.image.className = "";
-  dom.objection.classList.add("hidden");
+  hideObjectionBurst();
   hideDialogue();
   presentDeferredFeedback();
   scheduleIdle();
+}
+
+function showObjectionBurst() {
+  clearTimeout(objectionHideTimer);
+  clearTimeout(objectionFinishTimer);
+  dom.objection.className = "objection-burst";
+  void dom.objection.offsetWidth;
+  dom.objection.classList.add("active");
+  objectionHideTimer = setTimeout(hideObjectionBurst, 1_300);
+}
+
+function hideObjectionBurst() {
+  clearTimeout(objectionHideTimer);
+  clearTimeout(objectionFinishTimer);
+  objectionHideTimer = undefined;
+  objectionFinishTimer = undefined;
+  if (dom.objection.classList.contains("hidden")
+      || dom.objection.classList.contains("exiting")) return;
+  dom.objection.classList.remove("active");
+  dom.objection.classList.add("exiting");
+  objectionFinishTimer = setTimeout(() => {
+    dom.objection.className = "objection-burst hidden";
+    objectionFinishTimer = undefined;
+  }, 160);
 }
 
 function showTemporaryMessage(message, duration) {
