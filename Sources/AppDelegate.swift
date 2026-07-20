@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.sharingType = .readOnly
         panel.isMovable = false
         panel.isMovableByWindowBackground = false
+        panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         let images = loadImages()

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import QuartzCore
 
 /// 不依赖 AppKit 的预览所有权策略，供隐藏预览生命周期和无 UI 自检共用。
@@ -100,6 +101,9 @@ final class PetView: NSView {
     private let dragVelocityTracker = DragVelocityTracker()
     private let shakeGestureDetector = ShakeGestureDetector()
     private let accessoryScatterController = AccessoryScatterController()
+    private let headPettingGesture = HeadPettingGesture()
+    private let appWindowLiftController = AppWindowLiftController()
+    private let mouseFollowController = MouseFollowController()
     private var interactionMemory = InteractionMemory()
     private var interactiveActionBag = PetActionBag<PetAction>()
     private var idleActionBag = PetActionBag<PetAction>()
@@ -132,7 +136,14 @@ final class PetView: NSView {
     private var crossExaminationFeedbackWorkItem: DispatchWorkItem?
     private var courtRecordUnlockWorkItem: DispatchWorkItem?
     private var companionModeExpirationWorkItem: DispatchWorkItem?
+    private var headPetAnimationWorkItems: [DispatchWorkItem] = []
     private var idleScheduler: IdleBehaviorScheduler!
+    private var mouseFollowTimer: Timer?
+    private var mouseFollowLastTimestamp: TimeInterval?
+    private var mouseFollowAnimationElapsed: TimeInterval = 0
+    private var mouseFollowAnimationIndex = 0
+    private var mouseFollowLastFacing: MouseFollowFacing?
+    private var pendingAppLiftFailureMessage: String?
     private var throwPhysicsController: ThrowPhysicsController?
     private var courtRecordPanelController: CourtRecordPanelController?
     private var petTrackingArea: NSTrackingArea?
@@ -442,6 +453,9 @@ final class PetView: NSView {
         accessoryCompletionRewardWorkItem?.cancel()
         courtRecordUnlockWorkItem?.cancel()
         companionModeExpirationWorkItem?.cancel()
+        headPetAnimationWorkItems.forEach { $0.cancel() }
+        mouseFollowTimer?.invalidate()
+        mouseFollowController.disable()
         throwPhysicsController?.cancel()
         shakeGestureDetector.cancelCurrentGrab()
         cancelTrackedAccessoryCollection()
@@ -453,8 +467,18 @@ final class PetView: NSView {
         super.viewDidMoveToWindow()
         throwPhysicsController?.cancel()
         guard let window else {
+            _ = appWindowLiftController.cancel()
+            mouseFollowTimer?.invalidate()
+            mouseFollowTimer = nil
+            mouseFollowLastTimestamp = nil
+            mouseFollowController.pause()
             throwPhysicsController = nil
             return
+        }
+
+        if mouseFollowController.isEnabled {
+            mouseFollowController.synchronizeWindowOrigin(window.frame.origin)
+            startMouseFollowTimer()
         }
 
         var throwConfiguration = ThrowPhysicsController.Configuration()
@@ -567,7 +591,7 @@ final class PetView: NSView {
         }
         let trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -582,7 +606,37 @@ final class PetView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         isMouseInside = false
+        headPettingGesture.cancel()
         updateFollowUpHotspotVisibility()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard
+            interactionMode == .ordinary,
+            currentAction == .idle,
+            !mouseFollowController.isEnabled,
+            !appWindowLiftController.isLifting
+        else {
+            headPettingGesture.cancel()
+            return
+        }
+
+        let pointInPetView = convert(event.locationInWindow, from: nil)
+        let region = imageView.image.flatMap { image in
+            GrabRegionDetector.shared.detect(
+                at: pointInPetView,
+                imageViewFrame: imageView.frame,
+                image: image
+            )
+        }
+        let eventResult = headPettingGesture.addSample(
+            timestamp: event.timestamp,
+            position: pointInPetView,
+            region: region,
+            isPrimaryButtonDown: NSEvent.pressedMouseButtons & 1 != 0
+        )
+        guard eventResult == .triggered else { return }
+        beginHeadPetAnimation()
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -593,13 +647,16 @@ final class PetView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard interactionMode != .courtRecordPanel else { return }
+        let wasShowingHeadPetAnimation = currentAction == .headPetFlattened
+            || currentAction == .headPetRebound
+        headPettingGesture.cancel(reason: .primaryButtonPressed)
+        cancelHeadPetAnimation(returnToIdle: false)
         clickWorkItem?.cancel()
         environmentWorkItem?.cancel()
         environmentDetectionGeneration &+= 1
         let cancelledFollowUp = interactionMode.isFollowUp
             || followUpOriginAction != nil
             || activeCrossExaminationToken != nil
-        cancelFollowUp(returnToIdle: false)
         let pointInPetView = convert(event.locationInWindow, from: nil)
         activeGrabRegion = imageView.image.flatMap { image in
             GrabRegionDetector.shared.detect(
@@ -608,6 +665,11 @@ final class PetView: NSView {
                 image: image
             )
         }
+        if wasShowingHeadPetAnimation {
+            showIdle()
+        }
+        pauseMouseFollowForInteraction()
+        cancelFollowUp(returnToIdle: false)
 
         guard activeGrabRegion != nil else {
             didDrag = false
@@ -650,7 +712,14 @@ final class PetView: NSView {
         if !didDrag, abs(deltaX) + abs(deltaY) > 4 {
             didDrag = true
             transition(to: .dragging)
-            beginBeingHeld()
+            pendingAppLiftFailureMessage = nil
+            if !beginAppWindowLiftIfPossible() {
+                beginBeingHeld()
+                if let pendingAppLiftFailureMessage {
+                    showTemporaryMessage(pendingAppLiftFailureMessage, duration: 3.5)
+                    self.pendingAppLiftFailureMessage = nil
+                }
+            }
         }
 
         guard didDrag else { return }
@@ -660,11 +729,21 @@ final class PetView: NSView {
             x: windowOriginOnMouseDown.x + deltaX,
             y: windowOriginOnMouseDown.y + deltaY
         ))
+        if appWindowLiftController.isLifting {
+            switch appWindowLiftController.update(petFrame: appLiftSupportFrame) {
+            case .accessibilityPermissionLost, .invalidGeometryAndReleased,
+                 .moveFailedAndReleased:
+                beginBeingHeld()
+            case .inactive, .unchanged, .moved:
+                break
+            }
+        }
         dialogueController.updateAnchor(
             convert(event.locationInWindow, from: nil)
         )
 
-        if activeGrabRegion == .leg,
+        if !appWindowLiftController.isLifting,
+           activeGrabRegion == .leg,
            shakeGestureDetector.addSample(
                timestamp: event.timestamp,
                globalPosition: current
@@ -679,6 +758,7 @@ final class PetView: NSView {
         NSCursor.openHand.set()
 
         if didDrag {
+            let wasLiftingAppWindow = appWindowLiftController.isLifting
             let releasePosition = NSEvent.mouseLocation
             dragVelocityTracker.add(position: releasePosition, timestamp: event.timestamp)
             let releaseVelocity = dragVelocityTracker.estimatedVelocity(at: event.timestamp)
@@ -687,6 +767,14 @@ final class PetView: NSView {
             dragResignWorkItem?.cancel()
             imageView.layer?.setAffineTransform(.identity)
             didDrag = false
+
+            if wasLiftingAppWindow {
+                _ = appWindowLiftController.end()
+                mouseFollowController.synchronizeWindowOrigin(window?.frame.origin ?? .zero)
+                showIdle()
+                activeGrabRegion = nil
+                return
+            }
 
             if !didScatter,
                throwPhysicsController?.start(initialVelocity: releaseVelocity) == true {
@@ -774,6 +862,26 @@ final class PetView: NSView {
         companionItem.submenu = makeCompanionActivityMenu()
         menu.addItem(companionItem)
 
+        let followMouseItem = NSMenuItem(
+            title: mouseFollowController.isEnabled ? "关闭跟随模式" : "开启跟随模式",
+            action: #selector(toggleMouseFollowMode),
+            keyEquivalent: ""
+        )
+        followMouseItem.target = self
+        followMouseItem.state = mouseFollowController.isEnabled ? .on : .off
+        menu.addItem(followMouseItem)
+
+        let liftAppItem = NSMenuItem(
+            title: appWindowLiftController.isEnabled
+                ? "关闭托起 App 窗口"
+                : "开启托起 App 窗口",
+            action: #selector(toggleAppWindowLiftMode),
+            keyEquivalent: ""
+        )
+        liftAppItem.target = self
+        liftAppItem.state = appWindowLiftController.isEnabled ? .on : .off
+        menu.addItem(liftAppItem)
+
         menu.addItem(.separator())
         let courtRecordItem = NSMenuItem(
             title: "法庭记录…",
@@ -839,6 +947,43 @@ final class PetView: NSView {
         perform(action, countAsInteraction: true)
     }
 
+    @objc private func toggleMouseFollowMode() {
+        cancelFollowUp(returnToIdle: true)
+        noteExplicitInteraction()
+        if mouseFollowController.isEnabled {
+            stopMouseFollowMode(returnToIdle: true)
+            showTemporaryMessage("跟随模式已关闭。", duration: 2.0)
+            return
+        }
+
+        appWindowLiftController.isEnabled = false
+        guard let window else { return }
+        mouseFollowController.enable(windowOrigin: window.frame.origin)
+        startMouseFollowTimer()
+        showTemporaryMessage("好，我跟上你。", duration: 2.2)
+    }
+
+    @objc private func toggleAppWindowLiftMode() {
+        cancelFollowUp(returnToIdle: true)
+        noteExplicitInteraction()
+        if appWindowLiftController.isEnabled {
+            appWindowLiftController.isEnabled = false
+            if currentAction == .appLiftSupport {
+                showIdle()
+            }
+            showTemporaryMessage("托窗模式已关闭。", duration: 2.0)
+            return
+        }
+
+        stopMouseFollowMode(returnToIdle: true)
+        appWindowLiftController.isEnabled = true
+        if AXIsProcessTrusted() {
+            showTemporaryMessage("把我放到窗口下沿，再拖动我就能托起它。", duration: 4.0)
+        } else {
+            showTemporaryMessage("托起 App 需要先在系统设置中授权“辅助功能”。", duration: 4.5)
+        }
+    }
+
     @objc private func startCrossExaminationFromMenu() {
         cancelFollowUp(returnToIdle: true)
         cancelTrackedAccessoryCollection()
@@ -850,7 +995,10 @@ final class PetView: NSView {
         cancelFollowUp(returnToIdle: false)
         showIdle()
         noteExplicitInteraction()
-        showTemporaryMessage("单击随机 · 双击异议 · 拖动搬家", duration: 3.5)
+        showTemporaryMessage(
+            "单击随机 · 双击异议 · 抚摸头发 · 右键开启跟随或托窗",
+            duration: 4.5
+        )
     }
 
     private func makeCompanionActivityMenu() -> NSMenu {
@@ -1197,6 +1345,200 @@ final class PetView: NSView {
             && !didDrag
     }
 
+    private var appLiftSupportFrame: NSRect {
+        guard let window else { return .zero }
+        // 素材双掌位于 512px 画布约 77% 的高度，左右各留约 21% 透明区。
+        // 用可见支撑线而非整张透明画布，避免外部窗口悬在手掌上方。
+        let horizontalInset = imageView.frame.width * 0.21
+        return NSRect(
+            x: window.frame.minX + imageView.frame.minX + horizontalInset,
+            y: window.frame.minY + imageView.frame.minY,
+            width: imageView.frame.width - horizontalInset * 2,
+            height: imageView.frame.height * 0.77
+        )
+    }
+
+    private func beginAppWindowLiftIfPossible() -> Bool {
+        guard appWindowLiftController.isEnabled else { return false }
+        switch appWindowLiftController.begin(petFrame: appLiftSupportFrame) {
+        case .started, .alreadyActive:
+            perform(
+                .appLiftSupport,
+                autoReset: false,
+                mode: .dragging,
+                recordsInCourtRecord: false
+            )
+            return true
+        case .accessibilityPermissionDenied:
+            pendingAppLiftFailureMessage = "托起窗口需要“辅助功能”授权。"
+            return false
+        case .disabled, .invalidDesktopGeometry, .noCandidate:
+            return false
+        }
+    }
+
+    private func beginHeadPetAnimation() {
+        clickWorkItem?.cancel()
+        clickWorkItem = nil
+        noteExplicitInteraction()
+        cancelHeadPetAnimation(returnToIdle: false)
+        perform(
+            .headPetFlattened,
+            autoReset: false,
+            mode: .action,
+            recordsInCourtRecord: false
+        )
+
+        scheduleHeadPetStep(after: 0.72) { [weak self] in
+            self?.perform(
+                .headPetRebound,
+                autoReset: false,
+                mode: .action,
+                recordsInCourtRecord: false
+            )
+        }
+        scheduleHeadPetStep(after: 1.40) { [weak self] in
+            self?.showIdle()
+        }
+    }
+
+    private func scheduleHeadPetStep(
+        after delay: TimeInterval,
+        operation: @escaping () -> Void
+    ) {
+        let workItem = DispatchWorkItem(block: operation)
+        headPetAnimationWorkItems.append(workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelHeadPetAnimation(returnToIdle: Bool) {
+        headPetAnimationWorkItems.forEach { $0.cancel() }
+        headPetAnimationWorkItems.removeAll(keepingCapacity: true)
+        if returnToIdle,
+           currentAction == .headPetFlattened || currentAction == .headPetRebound {
+            showIdle()
+        }
+    }
+
+    private func startMouseFollowTimer() {
+        mouseFollowTimer?.invalidate()
+        mouseFollowLastTimestamp = ProcessInfo.processInfo.systemUptime
+        mouseFollowAnimationElapsed = 0
+        mouseFollowAnimationIndex = 0
+        mouseFollowLastFacing = nil
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.stepMouseFollow()
+        }
+        mouseFollowTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stepMouseFollow() {
+        guard mouseFollowController.isEnabled, let window else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let deltaTime = max(0, now - (mouseFollowLastTimestamp ?? now))
+        mouseFollowLastTimestamp = now
+
+        let ownsVisual = currentAction == .idle || isMouseFollowAction(currentAction)
+        let shouldPause = isContextMenuOpen
+            || didDrag
+            || activeGrabRegion != nil
+            || appWindowLiftController.isLifting
+            || interactionMode != .ordinary
+            || !ownsVisual
+        if shouldPause {
+            if !mouseFollowController.isPaused {
+                mouseFollowController.pause()
+            }
+            return
+        }
+
+        if mouseFollowController.isPaused {
+            mouseFollowController.synchronizeWindowOrigin(window.frame.origin)
+            mouseFollowController.resume()
+        }
+
+        let frame = mouseFollowController.stepUsingCurrentMouse(
+            deltaTime: deltaTime,
+            windowSize: window.frame.size,
+            visibleFrames: NSScreen.screens.map(\.visibleFrame)
+        )
+        window.setFrameOrigin(frame.windowOrigin)
+
+        guard frame.isMoving else {
+            if isMouseFollowAction(currentAction) {
+                showIdle()
+            }
+            return
+        }
+
+        mouseFollowAnimationElapsed += deltaTime
+        let frames: [PetAction] = [
+            .mouseFollowRunStrideA,
+            .mouseFollowRunPass,
+            .mouseFollowRunStrideB,
+            .mouseFollowRunPass,
+        ]
+        if mouseFollowAnimationElapsed >= 0.11 {
+            mouseFollowAnimationElapsed.formTruncatingRemainder(dividingBy: 0.11)
+            mouseFollowAnimationIndex = (mouseFollowAnimationIndex + 1) % frames.count
+        }
+        let animationFrame = frames[mouseFollowAnimationIndex]
+        if currentAction != animationFrame || mouseFollowLastFacing != frame.facing {
+            showMouseFollowVisual(animationFrame, facing: frame.facing)
+        }
+    }
+
+    private func showMouseFollowVisual(
+        _ action: PetAction,
+        facing: MouseFollowFacing
+    ) {
+        guard isMouseFollowAction(action) else { return }
+        currentAction = action
+        imageView.image = images[action]
+        imageView.isHidden = false
+        imageView.alphaValue = 1
+        imageView.layer?.removeAllAnimations()
+        imageView.layer?.setAffineTransform(CGAffineTransform(
+            scaleX: facing == .left ? -1 : 1,
+            y: 1
+        ))
+        mouseFollowLastFacing = facing
+    }
+
+    private func pauseMouseFollowForInteraction() {
+        guard mouseFollowController.isEnabled else { return }
+        mouseFollowController.pause()
+        if isMouseFollowAction(currentAction) {
+            showIdle()
+        }
+    }
+
+    private func stopMouseFollowMode(returnToIdle: Bool) {
+        let wasShowingFollowVisual = isMouseFollowAction(currentAction)
+        mouseFollowTimer?.invalidate()
+        mouseFollowTimer = nil
+        mouseFollowLastTimestamp = nil
+        mouseFollowAnimationElapsed = 0
+        mouseFollowAnimationIndex = 0
+        mouseFollowLastFacing = nil
+        mouseFollowController.disable()
+        imageView.layer?.setAffineTransform(.identity)
+        if returnToIdle, wasShowingFollowVisual {
+            showIdle()
+        }
+    }
+
+    private func isMouseFollowAction(_ action: PetAction) -> Bool {
+        switch action {
+        case .mouseFollowRunStrideA, .mouseFollowRunPass, .mouseFollowRunStrideB:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func perform(
         _ action: PetAction,
         autoReset: Bool = true,
@@ -1205,13 +1547,22 @@ final class PetView: NSView {
         mode: PetInteractionMode? = nil,
         recordsInCourtRecord: Bool = true
     ) {
+        if action != .headPetFlattened, action != .headPetRebound {
+            cancelHeadPetAnimation(returnToIdle: false)
+        }
         if countAsInteraction {
             noteExplicitInteraction()
         }
         edgeMotionEffectView.stop()
         resetWorkItem?.cancel()
         cancelTemporaryMessage()
-        let nextMode = mode ?? (action == .objection ? .objectionBurst : .action)
+        let nextMode = mode ?? {
+            switch action {
+            case .idle: return PetInteractionMode.ordinary
+            case .objection: return .objectionBurst
+            default: return .action
+            }
+        }()
         transition(to: nextMode)
         currentAction = action
         imageView.image = images[action]
@@ -1261,6 +1612,8 @@ final class PetView: NSView {
     }
 
     private func showIdle(mode: PetInteractionMode = .ordinary) {
+        headPetAnimationWorkItems.forEach { $0.cancel() }
+        headPetAnimationWorkItems.removeAll(keepingCapacity: true)
         resetWorkItem?.cancel()
         cancelTemporaryMessage()
         transition(to: mode)
@@ -2126,7 +2479,15 @@ final class PetView: NSView {
         case .dropped, .impact:
             return .impact
         case .idle, .objection, .evidence, .sleepy, .stepladder, .thinker,
-             .dusting, .irritated:
+             .dusting, .irritated, .careCheckTime, .careEncourage,
+             .careOfferMug, .careOfferWater, .careStretch, .careTiredEye,
+             .courtConcentrate, .courtExplain, .courtInspectClue,
+             .courtInspectDetail, .courtReady, .courtSurprised,
+             .workCarryFiles, .workGatherPapers, .workPolishBadge,
+             .workReadCase, .workSmallVictory, .workTakeNotes,
+             .headPetFlattened, .headPetRebound, .appLiftSupport,
+             .mouseFollowRunStrideA, .mouseFollowRunPass,
+             .mouseFollowRunStrideB:
             return .friendly
         }
     }
@@ -2342,6 +2703,107 @@ final class PetView: NSView {
                 values: [0.97, 1.06, 1.0],
                 duration: 0.46
             )
+
+        case .careOfferMug, .careOfferWater, .courtExplain:
+            addKeyframes(
+                keyPath: "transform.translation.x",
+                values: [0, -2, 2, 0],
+                duration: 1.2,
+                repeatCount: 2
+            )
+
+        case .careCheckTime, .workTakeNotes, .workPolishBadge:
+            addKeyframes(
+                keyPath: "transform.rotation.z",
+                values: [0, -0.018, 0.014, 0],
+                duration: 0.75,
+                repeatCount: 3
+            )
+
+        case .careEncourage, .workSmallVictory, .courtReady:
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [0, 5, -1, 0],
+                duration: 0.62
+            )
+            addKeyframes(
+                keyPath: "transform.scale",
+                values: [0.98, 1.04, 1.0],
+                duration: 0.62
+            )
+
+        case .careStretch, .courtConcentrate, .workReadCase:
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [0, 2, -1, 0],
+                duration: 1.35,
+                repeatCount: 2
+            )
+
+        case .careTiredEye, .workCarryFiles:
+            addKeyframes(
+                keyPath: "transform.rotation.z",
+                values: [-0.012, 0.012],
+                duration: 0.9,
+                repeatCount: 2,
+                autoreverses: true
+            )
+
+        case .workGatherPapers, .courtInspectClue, .courtInspectDetail:
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [3, -2, 1, 0],
+                duration: 0.85,
+                repeatCount: 2
+            )
+
+        case .courtSurprised:
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [0, 9, -4, 2, 0],
+                duration: 0.58
+            )
+            addKeyframes(
+                keyPath: "transform.scale",
+                values: [0.96, 1.06, 1.0],
+                duration: 0.58
+            )
+
+        case .headPetFlattened:
+            addKeyframes(
+                keyPath: "transform.scale.y",
+                values: [1.0, 0.82, 0.86],
+                duration: 0.34
+            )
+            addKeyframes(
+                keyPath: "transform.scale.x",
+                values: [1.0, 1.07, 1.04],
+                duration: 0.34
+            )
+
+        case .headPetRebound:
+            addKeyframes(
+                keyPath: "transform.scale.y",
+                values: [0.86, 1.13, 0.96, 1.04, 1.0],
+                duration: 0.66
+            )
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [-3, 7, -2, 2, 0],
+                duration: 0.66
+            )
+
+        case .appLiftSupport:
+            addKeyframes(
+                keyPath: "transform.translation.y",
+                values: [0, -2, 1, -1],
+                duration: 0.62,
+                repeatCount: .infinity,
+                autoreverses: true
+            )
+
+        case .mouseFollowRunStrideA, .mouseFollowRunPass, .mouseFollowRunStrideB:
+            break
         }
     }
 

@@ -18,6 +18,7 @@ xcrun swiftc \
 
 cp "$ROOT/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT"/Assets/*-cg.png "$RESOURCES/"
+cp "$ROOT"/Assets/generated-actions/*-cg.png "$RESOURCES/"
 
 # Keep a stable designated requirement across local rebuilds. Without this,
 # ad-hoc signing falls back to a cdhash-only requirement, so macOS keeps showing

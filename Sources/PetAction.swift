@@ -31,6 +31,30 @@ enum PetAction: String, CaseIterable {
     case dizzy
     case dusting
     case irritated
+    case careCheckTime = "care-check-time"
+    case careEncourage = "care-encourage"
+    case careOfferMug = "care-offer-mug"
+    case careOfferWater = "care-offer-water"
+    case careStretch = "care-stretch"
+    case careTiredEye = "care-tired-eye"
+    case courtConcentrate = "court-concentrate"
+    case courtExplain = "court-explain"
+    case courtInspectClue = "court-inspect-clue"
+    case courtInspectDetail = "court-inspect-detail"
+    case courtReady = "court-ready"
+    case courtSurprised = "court-surprised"
+    case workCarryFiles = "work-carry-files"
+    case workGatherPapers = "work-gather-papers"
+    case workPolishBadge = "work-polish-badge"
+    case workReadCase = "work-read-case"
+    case workSmallVictory = "work-small-victory"
+    case workTakeNotes = "work-take-notes"
+    case headPetFlattened = "head-pet-flattened"
+    case headPetRebound = "head-pet-rebound"
+    case appLiftSupport = "app-lift-support"
+    case mouseFollowRunStrideA = "mouse-follow-run-stride-a"
+    case mouseFollowRunPass = "mouse-follow-run-pass"
+    case mouseFollowRunStrideB = "mouse-follow-run-stride-b"
 
     var menuTitle: String {
         switch self {
@@ -64,6 +88,29 @@ enum PetAction: String, CaseIterable {
         case .dizzy: return "眩晕"
         case .dusting: return "拍掉灰尘"
         case .irritated: return "生气恢复"
+        case .careCheckTime: return "看看时间"
+        case .careEncourage: return "鼓励一下"
+        case .careOfferMug: return "递来热饮"
+        case .careOfferWater: return "递来水壶"
+        case .careStretch: return "伸个懒腰"
+        case .careTiredEye: return "揉揉眼睛"
+        case .courtConcentrate: return "凝神思考"
+        case .courtExplain: return "冷静说明"
+        case .courtInspectClue: return "蹲下查线索"
+        case .courtInspectDetail: return "仔细看细节"
+        case .courtReady: return "整理领带"
+        case .courtSurprised: return "发现意外"
+        case .workCarryFiles: return "搬运卷宗"
+        case .workGatherPapers: return "收拾文件"
+        case .workPolishBadge: return "擦拭律师徽章"
+        case .workReadCase: return "阅读卷宗"
+        case .workSmallVictory: return "小小庆祝"
+        case .workTakeNotes: return "记录线索"
+        case .headPetFlattened: return "头发被压扁"
+        case .headPetRebound: return "头发弹回"
+        case .appLiftSupport: return "托起 App 窗口"
+        case .mouseFollowRunStrideA, .mouseFollowRunPass, .mouseFollowRunStrideB:
+            return "跟随鼠标奔跑"
         }
     }
 
@@ -99,6 +146,14 @@ enum PetAction: String, CaseIterable {
         case .dizzy: return "天地都在转……"
         case .dusting: return "我的西装……"
         case .irritated: return "下次绝对不许这样！"
+        case .careCheckTime, .careEncourage, .careOfferMug, .careOfferWater,
+             .careStretch, .careTiredEye, .courtConcentrate, .courtExplain,
+             .courtInspectClue, .courtInspectDetail, .courtReady, .courtSurprised,
+             .workCarryFiles, .workGatherPapers, .workPolishBadge, .workReadCase,
+             .workSmallVictory, .workTakeNotes, .headPetFlattened,
+             .headPetRebound, .appLiftSupport, .mouseFollowRunStrideA,
+             .mouseFollowRunPass, .mouseFollowRunStrideB:
+            return nil
         }
     }
 
@@ -129,6 +184,20 @@ enum PetAction: String, CaseIterable {
         case .dizzy: return 2.2
         case .dusting: return 1.4
         case .irritated: return 2.0
+        case .careCheckTime, .careEncourage, .careOfferMug, .careOfferWater,
+             .careStretch, .careTiredEye:
+            return 3.4
+        case .courtConcentrate, .courtExplain, .courtInspectClue,
+             .courtInspectDetail, .courtReady, .courtSurprised:
+            return 3.0
+        case .workCarryFiles, .workGatherPapers, .workPolishBadge,
+             .workReadCase, .workSmallVictory, .workTakeNotes:
+            return 3.2
+        case .headPetFlattened: return 0.72
+        case .headPetRebound: return 0.68
+        case .appLiftSupport, .mouseFollowRunStrideA, .mouseFollowRunPass,
+             .mouseFollowRunStrideB:
+            return 0
         }
     }
 
@@ -140,6 +209,16 @@ enum PetAction: String, CaseIterable {
     }
 
     static var lowFrequencyIdleActions: [PetAction] {
-        [.think, .sleepy, .badgeToss, .evidence]
+        [.think, .sleepy, .badgeToss, .evidence] + automaticCompanionActions
     }
+
+    /// macOS 首发的无台词自动动作。通过待机动作袋逐轮播放，避免连续重复。
+    static let automaticCompanionActions: [PetAction] = [
+        .careCheckTime, .careEncourage, .careOfferMug, .careOfferWater,
+        .careStretch, .careTiredEye,
+        .courtConcentrate, .courtExplain, .courtInspectClue, .courtInspectDetail,
+        .courtReady, .courtSurprised,
+        .workCarryFiles, .workGatherPapers, .workPolishBadge, .workReadCase,
+        .workSmallVictory, .workTakeNotes,
+    ]
 }
