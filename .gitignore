@@ -4,6 +4,7 @@
 
 # Reproducible build output
 build/
+dist/
 .build/
 DerivedData/
 !windows/build/
